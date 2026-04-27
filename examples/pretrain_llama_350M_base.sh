@@ -2,7 +2,7 @@
 source depthbench/bin/activate
 
 torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "pretrain_llama_base.py" \
-    --run_name=pretrain-llama-350M-lr1e-3 \
+    --run_name=pretrain-llama-350M-lr3e-4 \
     --model-config="../configs/llama_350M_backbone.json" \
     --tokenizer-name-or-path="../pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
     --seed=42 \
@@ -13,4 +13,4 @@ torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "pretrai
     --warmup-steps=160 \
     --eval-interval=200 \
     --save-interval=400 \
-    --save-folder="../ckpt/depthbench/pretrain-llama-350M-lr1e-3"
+    --save-folder="../ckpt/depthbench/pretrain-llama-350M-lr3e-4"
