@@ -1891,10 +1891,10 @@ class TransformerConfig(ModelConfig):
         """
         dtype = kwargs.pop("dtype", DType.bfloat16)
         return cls.llama_like(
-            d_model=768,
+            d_model=512,
             vocab_size=vocab_size,
-            n_layers=kwargs.pop("n_layers", 6),
-            n_heads=kwargs.pop("n_heads", 12),
+            n_layers=kwargs.pop("n_layers", 8),
+            n_heads=kwargs.pop("n_heads", 8),
             rope_theta=kwargs.pop("rope_theta", 10_000),
             layer_norm_eps=kwargs.pop("layer_norm_eps", 1e-6),
             dtype=dtype,
@@ -1902,7 +1902,7 @@ class TransformerConfig(ModelConfig):
             feed_forward=kwargs.pop(
                 "feed_forward",
                 FeedForwardConfig(
-                    hidden_size=1512,
+                    hidden_size=1376,
                     bias=False,
                     dtype=dtype,
                     activation=ActivationFunction.silu,

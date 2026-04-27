@@ -11,7 +11,13 @@ from typing import List, Optional, cast
 import rich
 
 from olmo_core.config import Config, DType
-from olmo_core.data import StreamingParquetDataLoaderConfig, TokenizerConfig
+from olmo_core.data import (
+    NumpyDataLoaderConfig,
+    NumpyFSLDatasetConfig,
+    NumpyPaddedFSLDatasetConfig,
+    TokenizerConfig,
+)
+from olmo_core.data.numpy_dataset import NumpyDatasetConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank
 from olmo_core.nn.transformer import TransformerConfig
@@ -26,7 +32,7 @@ from olmo_core.train.callbacks import (
     CheckpointerCallback,
     ConfigSaverCallback,
     GPUMemoryMonitorCallback,
-    ParquetLMEvalCallback,
+    LMEvaluatorCallbackConfig,
     WandBCallback,
 )
 from olmo_core.train.train_module import (
@@ -37,35 +43,32 @@ from olmo_core.utils import seed_all
 
 log = logging.getLogger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-TRAIN_PARQUET_GLOB = "data/fineweb-edu/100BT/*.parquet"
-EVAL_PARQUET_PATH = "data/fineweb-edu/eval/eval_013_00008.parquet"
-TOKENIZER_PATH = "/pretrain/OLMo-core/src/olmo_core/data/tokenizers/t5-base"
-
+PRETOKENIZED_DATA_ROOT = "/fast/wangk/data/fineweb-edu/pre-tokenize"
+PROJECT_CODE_ROOT = "/home/wangk/DepthBench"
+TRAIN_DATA_GLOB = f"{PRETOKENIZED_DATA_ROOT}/train/*.npy"
+EVAL_DATA_GLOB = f"{PRETOKENIZED_DATA_ROOT}/eval/*.npy"
+TOKENIZER_PATH = f"{PROJECT_CODE_ROOT}/pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json"
 
 @dataclass
 class ExperimentConfig(Config):
     model: TransformerConfig
-    data_loader: StreamingParquetDataLoaderConfig
+    dataset: NumpyDatasetConfig
+    data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
-    init_seed: int = 6198
+    init_seed: int = 42
     load_path: Optional[str] = None
+    load_trainer_state: bool = False
 
 
 def build_config(args: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
     save_folder = args.save_folder or f"workspace/{args.run_name}"
     work_dir = args.work_dir or str(Path(save_folder) / "dataset-cache")
 
-    tokenizer_config = TokenizerConfig(
-        vocab_size=32128,
-        bos_token_id=0,
-        eos_token_id=1,
-        pad_token_id=0,
-        identifier=args.tokenizer_name_or_path,
-    )
+    tokenizer_config = TokenizerConfig.gpt_neox_olmo_dolma_v1_5()
+    tokenizer_config.identifier = args.tokenizer_name_or_path
 
-    model_config = TransformerConfig.llama_1B_backbone(
+    model_config = TransformerConfig.llama_60M_backbone(
         vocab_size=tokenizer_config.vocab_size,
         dtype=DType.bfloat16,
     )
@@ -73,16 +76,17 @@ def build_config(args: argparse.Namespace, overrides: List[str]) -> ExperimentCo
     global_batch_size_tokens = args.global_train_batch_size * args.sequence_length
     rank_microbatch_size_tokens = args.device_train_microbatch_size * args.sequence_length
 
-    data_loader_config = StreamingParquetDataLoaderConfig(
-        train_parquet_glob=args.train_parquet_glob,
-        eval_parquet_path=args.eval_parquet_path,
-        text_field=args.text_field,
-        tokenizer_name_or_path=args.tokenizer_name_or_path,
-        tokenizer_config=tokenizer_config,
+    dataset_config = NumpyFSLDatasetConfig.glob(
+        args.train_data_glob,
         sequence_length=args.sequence_length,
-        global_batch_size=global_batch_size_tokens,
+        tokenizer=tokenizer_config,
         work_dir=work_dir,
+    )
+
+    data_loader_config = NumpyDataLoaderConfig(
+        global_batch_size=global_batch_size_tokens,
         seed=args.seed,
+        num_workers=args.data_loader_num_workers,
     )
 
     train_module_config = TransformerTrainModuleConfig(
@@ -107,6 +111,12 @@ def build_config(args: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             reduce_dtype=DType.float32,
         ),
         autocast_precision=DType.bfloat16,
+    )
+
+    eval_duration = (
+        Duration.steps(args.eval_max_batches)
+        if args.eval_max_batches > 0
+        else Duration.epochs(1)
     )
 
     trainer_config = (
@@ -139,28 +149,33 @@ def build_config(args: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback(
             "lm_evaluator",
-            ParquetLMEvalCallback(
-                eval_parquet_path=args.eval_parquet_path,
-                text_field=args.text_field,
-                tokenizer_name_or_path=args.tokenizer_name_or_path,
-                tokenizer_config=tokenizer_config,
-                sequence_length=args.sequence_length,
+            LMEvaluatorCallbackConfig(
+                eval_dataset=NumpyPaddedFSLDatasetConfig.glob(
+                    args.eval_data_glob,
+                    metadata=[{"label": "fineweb-edu-eval"}],
+                    sequence_length=args.sequence_length,
+                    tokenizer=tokenizer_config,
+                    work_dir=work_dir,
+                ),
                 eval_interval=args.eval_interval,
-                eval_max_batches=args.eval_max_batches,
+                eval_duration=eval_duration,
             ),
         )
     )
 
     return ExperimentConfig(
         model=model_config,
+        dataset=dataset_config,
         data_loader=data_loader_config,
         train_module=train_module_config,
         trainer=trainer_config,
         init_seed=args.seed,
+        load_path=args.load_path,
+        load_trainer_state=args.load_trainer_state,
     ).merge(overrides)
 
 
-def train(config: ExperimentConfig):
+def train(config: ExperimentConfig) -> None:
     if get_rank() == 0:
         rich.print(config)
 
@@ -168,7 +183,8 @@ def train(config: ExperimentConfig):
 
     model = config.model.build(init_device="meta")
     train_module = config.train_module.build(model)
-    data_loader = config.data_loader.build(dp_process_group=train_module.dp_process_group)
+    dataset = config.dataset.build()
+    data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader)
 
     config_dict = config.as_config_dict()
@@ -176,35 +192,37 @@ def train(config: ExperimentConfig):
 
     if not trainer.no_checkpoints and not trainer.maybe_load_checkpoint() and config.load_path:
         log.info("Loading checkpoint from %s", config.load_path)
-        trainer.load_checkpoint(config.load_path)
+        trainer.load_checkpoint(config.load_path, load_trainer_state=config.load_trainer_state)
 
     trainer.fit()
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Train the llama-1B baseline on parquet data with DDP.",
+        description="Train the llama-60M baseline on pre-tokenized numpy data with DDP.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("run_name", nargs="?", default="llama-1B")
+    parser.add_argument("--run_name", nargs="?", default="pretrain-llama-60M-new")
     parser.add_argument("--save-folder", type=str, default=None)
     parser.add_argument("--work-dir", type=str, default=None)
-    parser.add_argument("--train-parquet-glob", type=str, default=TRAIN_PARQUET_GLOB)
-    parser.add_argument("--eval-parquet-path", type=str, default=EVAL_PARQUET_PATH)
-    parser.add_argument("--text-field", type=str, default="text")
+    parser.add_argument("--train-data-glob", type=str, default=TRAIN_DATA_GLOB)
+    parser.add_argument("--eval-data-glob", type=str, default=EVAL_DATA_GLOB)
     parser.add_argument("--tokenizer-name-or-path", type=str, default=TOKENIZER_PATH)
-    parser.add_argument("--sequence-length", type=int, default=1024)
-    parser.add_argument("--seed", type=int, default=6198)
-    parser.add_argument("--max-steps", type=int, default=40000)
+    parser.add_argument("--sequence-length", type=int, default=2048)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--max-steps", type=int, default=1600)
     parser.add_argument("--global-train-batch-size", type=int, default=512)
-    parser.add_argument("--device-train-microbatch-size", type=int, default=8)
-    parser.add_argument("--learning-rate", type=float, default=5e-4)
-    parser.add_argument("--warmup-steps", type=int, default=4000)
-    parser.add_argument("--eval-interval", type=int, default=400)
+    parser.add_argument("--device-train-microbatch-size", type=int, default=16)
+    parser.add_argument("--data-loader-num-workers", type=int, default=4)
+    parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument("--warmup-steps", type=int, default=160)
+    parser.add_argument("--eval-interval", type=int, default=200)
     parser.add_argument("--eval-max-batches", type=int, default=-1)
-    parser.add_argument("--save-interval", type=int, default=1000)
-    parser.add_argument("--wandb-project", type=str, default=None)
-    parser.add_argument("--wandb-entity", type=str, default=None)
+    parser.add_argument("--save-interval", type=int, default=400)
+    parser.add_argument("--wandb-project", type=str, default="residual-bench")
+    parser.add_argument("--wandb-entity", type=str, default="wang-keyu-2002-max-planck-society")
+    parser.add_argument("--load-path", type=str, default=None)
+    parser.add_argument("--load-trainer-state", action="store_true")
     return parser
 
 

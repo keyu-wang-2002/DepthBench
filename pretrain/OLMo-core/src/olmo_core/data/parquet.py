@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 
@@ -16,7 +17,7 @@ from .tokenizer import TokenizerConfig
 
 import datasets
 import datasets.distributed
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 __all__ = [
     "DEFAULT_PARQUET_SHUFFLE_BUFFER_SIZE",
@@ -30,6 +31,37 @@ log = logging.getLogger(__name__)
 
 
 DEFAULT_PARQUET_SHUFFLE_BUFFER_SIZE = 10_000
+
+
+def load_parquet_tokenizer(
+    tokenizer_name_or_path: str,
+    tokenizer_config: TokenizerConfig,
+    *,
+    model_max_length: Optional[int] = None,
+):
+    tokenizer_path = Path(tokenizer_name_or_path)
+    if tokenizer_path.is_file() and tokenizer_path.suffix == ".json":
+        tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(tokenizer_path))
+    elif tokenizer_path.is_dir() and (tokenizer_path / "tokenizer.json").is_file():
+        tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(tokenizer_path / "tokenizer.json"))
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer_name_or_path,
+            model_max_length=model_max_length,
+            use_fast=True,
+            local_files_only=tokenizer_path.exists(),
+        )
+
+    if model_max_length is not None:
+        tokenizer.model_max_length = model_max_length
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer_config.pad_token_id
+    if tokenizer.eos_token_id is None:
+        tokenizer.eos_token_id = tokenizer_config.eos_token_id
+    if tokenizer.bos_token_id is None and tokenizer_config.bos_token_id is not None:
+        tokenizer.bos_token_id = tokenizer_config.bos_token_id
+
+    return tokenizer
 
 
 
@@ -77,13 +109,11 @@ def iter_tokenized_parquet_batches(
     if shuffle:
         dataset = dataset.shuffle(seed=shuffle_seed, buffer_size=shuffle_buffer_size)
 
-    tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = load_parquet_tokenizer(
         tokenizer_name_or_path,
+        tokenizer_config,
         model_max_length=sequence_length,
-        use_fast=True,
     )
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token_id = tokenizer_config.pad_token_id
 
     batch_input_ids: List[torch.Tensor] = []
     token_buffer: List[int] = []

@@ -1,4 +1,13 @@
-#!/usr/bin/env python3
+"""
+This file uses streaming to read parquet files and perform tokenization.
+This method has been deprecated in this project, 
+and the file is retained only as a draft.
+
+In this project, pre-tokenization is used 
+along with the built-in data loading method of OLMo-core
+refer ./pretrain_llama_60M_base.py
+and https://olmo-core.readthedocs.io/en/stable/guides/data_loading.html
+"""
 
 from __future__ import annotations
 
@@ -37,10 +46,11 @@ from olmo_core.utils import seed_all
 
 log = logging.getLogger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-TRAIN_PARQUET_GLOB = "data/fineweb-edu/100BT/*.parquet"
-EVAL_PARQUET_PATH = "data/fineweb-edu/eval/eval_013_00008.parquet"
-TOKENIZER_PATH = "/pretrain/OLMo-core/src/olmo_core/data/tokenizers/t5-base"
+RAW_DATA_ROOT = ""
+PROJECT_CODE_ROOT = ""
+TRAIN_PARQUET_GLOB = f"{RAW_DATA_ROOT}/100BT/*.parquet"
+EVAL_PARQUET_PATH = f"{RAW_DATA_ROOT}/eval/eval_013_00008.parquet"
+TOKENIZER_PATH = f"{PROJECT_CODE_ROOT}/pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json"
 
 
 @dataclass
@@ -57,13 +67,8 @@ def build_config(args: argparse.Namespace, overrides: List[str]) -> ExperimentCo
     save_folder = args.save_folder or f"workspace/{args.run_name}"
     work_dir = args.work_dir or str(Path(save_folder) / "dataset-cache")
 
-    tokenizer_config = TokenizerConfig(
-        vocab_size=32128,
-        bos_token_id=0,
-        eos_token_id=1,
-        pad_token_id=0,
-        identifier=args.tokenizer_name_or_path,
-    )
+    tokenizer_config = TokenizerConfig.gpt_neox_olmo_dolma_v1_5()
+    tokenizer_config.identifier = args.tokenizer_name_or_path
 
     model_config = TransformerConfig.llama_60M_backbone(
         vocab_size=tokenizer_config.vocab_size,
@@ -186,7 +191,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Train the llama-60M baseline on parquet data with DDP.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("run_name", nargs="?", default="llama-60M")
+    parser.add_argument("--run_name", nargs="?", default="pretrain-llama-60M-new")
     parser.add_argument("--save-folder", type=str, default=None)
     parser.add_argument("--work-dir", type=str, default=None)
     parser.add_argument("--train-parquet-glob", type=str, default=TRAIN_PARQUET_GLOB)
@@ -203,8 +208,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--eval-interval", type=int, default=400)
     parser.add_argument("--eval-max-batches", type=int, default=-1)
     parser.add_argument("--save-interval", type=int, default=1000)
-    parser.add_argument("--wandb-project", type=str, default=None)
-    parser.add_argument("--wandb-entity", type=str, default=None)
+    parser.add_argument("--wandb-project", type=str, default="")
+    parser.add_argument("--wandb-entity", type=str, default="")
     return parser
 
 
