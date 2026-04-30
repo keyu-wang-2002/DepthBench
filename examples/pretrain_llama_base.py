@@ -34,6 +34,7 @@ from olmo_core.train.callbacks import (
     CheckpointerCallback,
     ConfigSaverCallback,
     GPUMemoryMonitorCallback,
+    LayerStatsMonitorCallback,
     LMEvaluatorCallbackConfig,
     WandBCallback,
 )
@@ -272,6 +273,13 @@ def build_config(args: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback(
+            "layer_stats",
+            LayerStatsMonitorCallback(
+                enabled=args.enable_layer_stats,
+                interval=args.layer_stats_interval,
+            ),
+        )
+        .with_callback(
             "checkpointer",
             CheckpointerCallback(
                 save_interval=args.save_interval,
@@ -366,6 +374,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wandb-entity", type=str, default="wang-keyu-2002-max-planck-society")
     parser.add_argument("--load-path", type=str, default=None)
     parser.add_argument("--load-trainer-state", action="store_true")
+    parser.add_argument("--enable-layer-stats", action="store_true")
+    parser.add_argument("--layer-stats-interval", type=int, default=1)
     return parser
 
 

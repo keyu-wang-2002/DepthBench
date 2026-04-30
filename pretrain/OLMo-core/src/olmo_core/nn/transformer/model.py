@@ -66,6 +66,7 @@ from .init import InitMethod
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
+    from .layer_stats import LayerStatsCollector
 
 __all__ = [
     "Transformer",
@@ -177,6 +178,7 @@ class Transformer(nn.Module):
         self._tp_enabled = False
         self._tp_mesh: Optional[DeviceMesh] = None
         self._fsdp_enabled = False
+        self._layer_stats_collector: Optional["LayerStatsCollector"] = None
 
         # Cache the value of these properties up-front in case the parameters are removed
         # later, like for pipeline parallelism.
@@ -194,6 +196,11 @@ class Transformer(nn.Module):
 
     def reset_auxiliary_metrics(self):
         pass
+
+    def set_layer_stats_collector(
+        self, collector: Optional["LayerStatsCollector"]
+    ) -> None:
+        self._layer_stats_collector = collector
 
     @property
     def pp_enabled(self) -> bool:
@@ -558,6 +565,10 @@ class Transformer(nn.Module):
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
             h = block(h, **all_block_kwargs, **block_kwargs)
+            if self._layer_stats_collector is not None:
+                h = self._layer_stats_collector.observe_hidden_state(
+                    f"block_{block_idx:02d}", h
+                )
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:

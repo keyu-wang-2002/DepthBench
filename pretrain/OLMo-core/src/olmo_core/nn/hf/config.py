@@ -1,7 +1,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from transformers import Olmo2Config, PretrainedConfig
+from transformers import LlamaConfig, Olmo2Config, PretrainedConfig
 
 from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention
@@ -95,9 +95,10 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
 
     blocks = list(model.blocks.values())
     first_block = blocks[0]
-    if not isinstance(first_block, ReorderedNormTransformerBlock):
+    if not isinstance(first_block, (TransformerBlock, ReorderedNormTransformerBlock)):
         raise NotImplementedError(
-            f"Block is not a {ReorderedNormTransformerBlock.__name__}, unable to build HF config for {model.__class__.__name__}"
+            f"Block is not a {TransformerBlock.__name__} or {ReorderedNormTransformerBlock.__name__}, "
+            f"unable to build HF config for {model.__class__.__name__}"
         )
 
     if not isinstance(first_block.attention, Attention):
@@ -135,6 +136,11 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
         "rms_norm_eps": first_block.feed_forward_norm.eps,
         "tie_word_embeddings": False,
     }
+
+    if isinstance(first_block, TransformerBlock) and not isinstance(
+        first_block, ReorderedNormTransformerBlock
+    ):
+        return LlamaConfig(**common_config_args)
 
     # The OLMo 3 model family is identical to the OLMo 2 model family, except:
     # - Sliding window attention is used for 3 out of 4 layers.

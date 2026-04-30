@@ -12,5 +12,7 @@ torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "pretrai
     --learning-rate=3e-4 \
     --warmup-steps=2000 \
     --eval-interval=200 \
-    --save-interval=400 \
-    --save-folder="../ckpt/depthbench/pretrain-llama-1B-lr3e-4"
+    --save-interval=5000 \
+    --save-folder="../ckpt/depthbench/pretrain-llama-1B-lr3e-4" \
+    --enable-layer-stats \
+    --layer-stats-interval 1 

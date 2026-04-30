@@ -28,7 +28,7 @@ import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn.functional as F
 from cached_path import cached_path
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerFast
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
@@ -46,6 +46,17 @@ from olmo_core.nn.transformer.model import Transformer
 from olmo_core.utils import prepare_cli_environment
 
 log = logging.getLogger(__name__)
+
+
+def load_local_or_hf_tokenizer(tokenizer_name_or_path: str | Path):
+    tokenizer_path = Path(tokenizer_name_or_path).expanduser()
+    tokenizer_json_path = tokenizer_path / "tokenizer.json"
+
+    if tokenizer_path.is_file() and tokenizer_path.suffix == ".json":
+        return PreTrainedTokenizerFast(tokenizer_file=str(tokenizer_path))
+    if tokenizer_path.is_dir() and tokenizer_json_path.is_file():
+        return PreTrainedTokenizerFast(tokenizer_file=str(tokenizer_json_path))
+    return AutoTokenizer.from_pretrained(tokenizer_name_or_path)
 
 
 def convert_checkpoint_to_hf(
@@ -167,7 +178,7 @@ def convert_checkpoint_to_hf(
     huggingface_tokenizer = None
     if tokenizer_path.exists():
         log.info(f"Saving preexisting tokenizer from {tokenizer_path}")
-        huggingface_tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+        huggingface_tokenizer = load_local_or_hf_tokenizer(tokenizer_path)
         huggingface_tokenizer.save_pretrained(output_path)
         print(f"Successfully saved model tokenizer to '{output_path}'")
         max_sequence_length = max_sequence_length or getattr(
@@ -179,7 +190,7 @@ def convert_checkpoint_to_hf(
             log.info(
                 f"Saving HF tokenizer {tokenizer_id}, using updated config from tokenizer config data and script arguments"
             )
-            huggingface_tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
+            huggingface_tokenizer = load_local_or_hf_tokenizer(tokenizer_id)
             max_sequence_length = max_sequence_length or getattr(
                 huggingface_tokenizer, "model_max_length", None
             )
