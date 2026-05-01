@@ -73,9 +73,9 @@ The following model configs are currently available under: [`./configs`](./confi
 
 ### 350M Aspect-Ratio Variants
 
-The following 350M-family configs keep `#heads` and `intermediate_size/d_model = 8/3` fixed while varying only `d_model` and `n_layer` to probe depth/width scaling at roughly the same parameter budget. The training configs follow the standard backbone.
+The following 350M-family configs keep `#heads` and `intermediate_size/d_model = 8/3` fixed while varying only `d_model` and `n_layer` (Aspect Ratio `d_model / n_layer`) to probe depth/width scaling at roughly the same parameter budget. The training configs follow the standard backbone.
 
-| Tier | Hidden | Intermediate | Heads | Layers | Head Dim | Aspect Ratio (`d_model / n_layer`) |
+| Tier | Hidden | Intermediate | Heads | Layers | Head Dim | Aspect Ratio |
 |---|---:|---:|---:|---:|---:|---:|
 | Ultra shallow-350M | 2240 | 5984 | 16 | 4 | 140 | 560.00 |
 | Very shallow-350M | 1680 | 4480 | 16 | 8 | 105 | 210.00 |
