@@ -71,7 +71,20 @@ The following model configs are currently available under: [`./configs`](./confi
 | 350M | 1024 | 2736 | 16 | 24 | 7.3B | 512 | 2048 | 7.0k |
 | 1B | 2048 | 5461 | 32 | 24 | 21.0B | 512 | 2048 | 20.0k |
 
-TODO: add deep varients for 350M
+### 350M Aspect-Ratio Variants
+
+The following 350M-family configs keep `#heads` and `intermediate_size/d_model = 8/3` fixed while varying only `d_model` and `n_layer` to probe depth/width scaling at roughly the same parameter budget. The training configs follow the standard backbone.
+
+| Tier | Hidden | Intermediate | Heads | Layers | Head Dim | Aspect Ratio (`d_model / n_layer`) |
+|---|---:|---:|---:|---:|---:|---:|
+| Ultra shallow-350M | 2240 | 5984 | 16 | 4 | 140 | 560.00 |
+| Very shallow-350M | 1680 | 4480 | 16 | 8 | 105 | 210.00 |
+| Shallow-350M | 1232 | 3296 | 16 | 16 | 77 | 77.00 |
+| Standard-350M | 1024 | 2736 | 16 | 24 | 64 | 42.67 |
+| Deeper-350M | 848 | 2272 | 16 | 36 | 53 | 23.56 |
+| Deep-350M | 752 | 2016 | 16 | 46 | 47 | 16.35 |
+| Very deep-350M | 688 | 1840 | 16 | 56 | 43 | 12.29 |
+| Extreme deep-350M | 512 | 1376 | 16 | 104 | 32 | 4.92 |
 
 ## Training Script
 
