@@ -22,8 +22,12 @@ from olmo_core.data.numpy_dataset import NumpyDatasetConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank
 from olmo_core.nn.feed_forward import ActivationFunction, FeedForwardConfig, FeedForwardType
-from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import AdamWConfig, CosWithWarmup
+from olmo_core.nn.transformer import (
+    HyperConnectionsConfig,
+    TransformerBlockType,
+    TransformerConfig,
+)
+from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
     Duration,
     TrainerConfig,
@@ -36,6 +40,7 @@ from olmo_core.train.callbacks import (
     GPUMemoryMonitorCallback,
     LayerStatsMonitorCallback,
     LMEvaluatorCallbackConfig,
+    SwanLabCallback,
     WandBCallback,
 )
 from olmo_core.train.train_module import (
@@ -46,14 +51,21 @@ from olmo_core.utils import seed_all
 
 log = logging.getLogger(__name__)
 
-PRETOKENIZED_DATA_ROOT = "/fast/wangk/data/fineweb-edu/pre-tokenize"
-PROJECT_CODE_ROOT = "/home/wangk/DepthBench"
-TRAIN_DATA_GLOB = f"{PRETOKENIZED_DATA_ROOT}/train/*.npy"
-EVAL_DATA_GLOB = f"{PRETOKENIZED_DATA_ROOT}/eval/*.npy"
-TOKENIZER_PATH = f"{PROJECT_CODE_ROOT}/pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json"
-DEFAULT_MODEL_CONFIG_PATH = (
-    f"{PROJECT_CODE_ROOT}/configs/llama_60M_backbone.json"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PRETOKENIZED_DATA_ROOT = REPO_ROOT / "data" / "fineweb-edu" / "pre-tokenize"
+TRAIN_DATA_GLOB = str(PRETOKENIZED_DATA_ROOT / "train" / "*.npy")
+EVAL_DATA_GLOB = str(PRETOKENIZED_DATA_ROOT / "eval" / "*.npy")
+TOKENIZER_PATH = str(
+    REPO_ROOT
+    / "pretrain"
+    / "OLMo-core"
+    / "src"
+    / "olmo_core"
+    / "data"
+    / "tokenizers"
+    / "allenai_gpt-neox-olmo-dolma-v1_5.json"
 )
+DEFAULT_MODEL_CONFIG_PATH = str(REPO_ROOT / "configs" / "llama_60M_backbone.json")
 
 HF_TO_LLAMA_LIKE_KEY_MAP = {
     "hidden_size": "d_model",
@@ -84,6 +96,7 @@ DIRECT_LLAMA_LIKE_KEYS = {
     "init_std",
     "embedding_init_std",
     "embed_scale",
+    "block_name",
 }
 
 
@@ -128,6 +141,15 @@ def _load_llama_like_kwargs(config_path: str, default_vocab_size: int) -> tuple[
         if isinstance(value, str) and value in activation_aliases:
             return activation_aliases[value]
         raise ValueError(f"Unsupported hidden_act in model config: {value}")
+
+    def resolve_block_name(value: Any) -> TransformerBlockType:
+        if value is None:
+            return TransformerBlockType.default
+        if isinstance(value, TransformerBlockType):
+            return value
+        if isinstance(value, str):
+            return TransformerBlockType(value)
+        raise TypeError(f"Unsupported block_name value in model config: {value!r}")
 
     def build_feed_forward_config(
         raw_config: dict[str, Any], dtype: DType
@@ -183,10 +205,18 @@ def _load_llama_like_kwargs(config_path: str, default_vocab_size: int) -> tuple[
 
     model_kwargs["dtype"] = resolve_dtype(model_kwargs.get("dtype"), default=DType.bfloat16)
     model_kwargs["vocab_size"] = model_kwargs.get("vocab_size", default_vocab_size)
+    if "block_name" in model_kwargs:
+        model_kwargs["block_name"] = resolve_block_name(model_kwargs["block_name"])
 
     feed_forward = build_feed_forward_config(raw_config, model_kwargs["dtype"])
     if feed_forward is not None:
         model_kwargs["feed_forward"] = feed_forward
+
+    hyper_connections = raw_config.get("hyper_connections")
+    if hyper_connections is not None:
+        if not isinstance(hyper_connections, dict):
+            raise TypeError("'hyper_connections' in model config must be a JSON object")
+        model_kwargs["hyper_connections"] = HyperConnectionsConfig.from_dict(hyper_connections)
 
     required_keys = ("d_model", "n_layers", "n_heads", "vocab_size")
     missing_keys = [key for key in required_keys if model_kwargs.get(key) is None]
@@ -216,6 +246,27 @@ def build_config(args: argparse.Namespace, overrides: List[str]) -> ExperimentCo
     sequence_length = args.sequence_length or raw_model_config.get("max_sequence_length", 2048)
     model_config = TransformerConfig.llama_like(**model_kwargs)
 
+    optim_group_overrides = None
+    hyper_block_configs = [
+        block_config
+        for block_config in model_config.resolved_block_configs
+        if block_config.hyper_connections is not None
+    ]
+    if hyper_block_configs:
+        hyper_config = hyper_block_configs[0].hyper_connections
+        assert hyper_config is not None
+        if hyper_config.disable_static_weight_decay:
+            static_patterns = []
+            static_patterns.extend(
+                hyper_config.static_parameter_patterns("blocks.*.attention_hyper_connection")
+            )
+            static_patterns.extend(
+                hyper_config.static_parameter_patterns("blocks.*.feed_forward_hyper_connection")
+            )
+            optim_group_overrides = [
+                OptimGroupOverride(params=static_patterns, opts={"weight_decay": 0.0})
+            ]
+
     global_batch_size_tokens = args.global_train_batch_size * sequence_length
     rank_microbatch_size_tokens = args.device_train_microbatch_size * sequence_length
 
@@ -240,6 +291,7 @@ def build_config(args: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             betas=(0.9, 0.95),
             eps=1e-8,
             weight_decay=0.1,
+            group_overrides=optim_group_overrides,
         ),
         scheduler=CosWithWarmup(
             warmup=args.warmup_steps,
@@ -294,6 +346,19 @@ def build_config(args: argparse.Namespace, overrides: List[str]) -> ExperimentCo
                 entity=args.wandb_entity,
                 cancel_check_interval=10,
                 enabled=bool(args.wandb_project),
+            ),
+        )
+        .with_callback(
+            "swanlab",
+            SwanLabCallback(
+                project=args.swanlab_project,
+                workspace=args.swanlab_workspace,
+                experiment_name=args.run_name,
+                description=args.swanlab_description,
+                group=args.swanlab_group,
+                tags=args.swanlab_tags,
+                mode=args.swanlab_mode,
+                enabled=bool(args.swanlab_project),
             ),
         )
         .with_callback("config_saver", ConfigSaverCallback())
@@ -370,8 +435,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--eval-interval", type=int, default=200)
     parser.add_argument("--eval-max-batches", type=int, default=-1)
     parser.add_argument("--save-interval", type=int, default=400)
-    parser.add_argument("--wandb-project", type=str, default="residual-bench")
-    parser.add_argument("--wandb-entity", type=str, default="wang-keyu-2002-max-planck-society")
+    parser.add_argument("--wandb-project", type=str, default="")
+    parser.add_argument("--wandb-entity", type=str, default="")
+    parser.add_argument("--swanlab-project", type=str, default="")
+    parser.add_argument("--swanlab-workspace", type=str, default="")
+    parser.add_argument("--swanlab-group", type=str, default="")
+    parser.add_argument("--swanlab-description", type=str, default="")
+    parser.add_argument("--swanlab-mode", type=str, default="")
+    parser.add_argument("--swanlab-tags", nargs="*", default=None)
     parser.add_argument("--load-path", type=str, default=None)
     parser.add_argument("--load-trainer-state", action="store_true")
     parser.add_argument("--enable-layer-stats", action="store_true")

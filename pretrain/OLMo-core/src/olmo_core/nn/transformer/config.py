@@ -6,7 +6,7 @@ from fnmatch import fnmatch
 from itertools import cycle, islice
 from typing import TYPE_CHECKING, Dict, List, Optional, cast
 
-from olmo_core.config import UNSET, DType, StrEnum
+from olmo_core.config import UNSET, Config, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.base import SequenceMixerConfig
@@ -146,6 +146,73 @@ class TransformerBlockType(StrEnum):
     """
 
 
+class HyperConnectionsKind(StrEnum):
+    """
+    Residual backends based on Hyper-Connections.
+    """
+
+    hc = "hc"
+    mhc = "mhc"
+
+
+@dataclass
+class HyperConnectionsConfig(Config):
+    """
+    Configuration for HC / mHC residual routing.
+    """
+
+    kind: HyperConnectionsKind = HyperConnectionsKind.hc
+    num_residual_streams: int = 4
+    tanh: bool = True
+    gating_factor_init: float = 0.01
+    sinkhorn_iters: int = 20
+    disable_static_weight_decay: bool = True
+    scale_output_init_by_sqrt_n: bool = True
+
+    def __post_init__(self):
+        if isinstance(self.kind, str):
+            self.kind = HyperConnectionsKind(self.kind)
+
+    def build(
+        self,
+        *,
+        dim: int,
+        branch,
+        layer_index: int,
+        init_device: str,
+        dtype,
+    ):
+        from ..hyper_connections import HyperConnection
+
+        return HyperConnection(
+            kind=self.kind.value,
+            num_residual_streams=self.num_residual_streams,
+            dim=dim,
+            branch=branch,
+            layer_index=layer_index,
+            tanh=self.tanh,
+            gating_factor_init=self.gating_factor_init,
+            sinkhorn_iters=self.sinkhorn_iters,
+            init_device=init_device,
+            dtype=dtype,
+        )
+
+    def num_params(self, d_model: int) -> int:
+        n = self.num_residual_streams
+        if self.kind == HyperConnectionsKind.hc:
+            return (n * (n + 1)) + (d_model * (n + 1)) + 1 + n + d_model + 1
+
+        flat_dim = d_model * n
+        return (flat_dim * n) + (flat_dim * n) + (flat_dim * n * n) + 3 + n + n + (n * n)
+
+    def static_parameter_patterns(self, module_pattern: str) -> list[str]:
+        if self.kind == HyperConnectionsKind.hc:
+            names = ("static_alpha", "static_beta")
+        else:
+            names = ("pre_bias", "post_bias", "residual_bias")
+        return [f"{module_pattern}.{name}" for name in names]
+
+
 @dataclass
 class TransformerBlockConfig(ModuleConfig):
     """
@@ -189,6 +256,10 @@ class TransformerBlockConfig(ModuleConfig):
     feed_forward_residual_alpha: Optional[float] = None
     """
     A scaling factor applied to the feed-forward (MLP) output before adding it to the residual stream.
+    """
+    hyper_connections: Optional[HyperConnectionsConfig] = None
+    """
+    Optional HC / mHC residual backend. Currently supported for the default pre-norm block only.
     """
 
     def __post_init__(self, attention: Optional[AttentionConfig] = None):
@@ -268,6 +339,9 @@ class TransformerBlockConfig(ModuleConfig):
         # Block attn and MLP scaling factors.
         if self.name == TransformerBlockType.normalized:
             block_params += 2 * d_model
+
+        if self.hyper_connections is not None:
+            block_params += 2 * self.hyper_connections.num_params(d_model)
 
         # Block attention params.
         block_params += self.sequence_mixer.num_params(d_model)
@@ -1466,6 +1540,7 @@ class TransformerConfig(ModelConfig):
         attn_backend: Optional[AttentionBackendName] = None,
         sliding_window: Optional[SlidingWindowAttentionConfig] = None,
         block_name: TransformerBlockType = TransformerBlockType.default,
+        hyper_connections: Optional[HyperConnectionsConfig] = None,
         block_mods: Optional[
             Dict[int, Callable[[TransformerBlockConfig], TransformerBlockConfig]]
         ] = None,
@@ -1536,6 +1611,7 @@ class TransformerConfig(ModelConfig):
             feed_forward=feed_forward,
             feed_forward_moe=feed_forward_moe,
             layer_norm=layer_norm,
+            hyper_connections=hyper_connections,
         )
 
         if block_mods and kwargs.get("block_overrides"):

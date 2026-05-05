@@ -1,18 +1,44 @@
 #!/bin/bash
-source depthbench/bin/activate
+set -euo pipefail
 
-torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "pretrain_llama_base.py" \
-    --run_name=pretrain-llama-250M-lr3e-4 \
-    --model-config="../configs/llama_250M_backbone.json" \
-    --tokenizer-name-or-path="../pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
-    --seed=42 \
-    --max-steps=5000 \
-    --global-train-batch-size=512 \
-    --device-train-microbatch-size=16 \
-    --learning-rate=3e-4 \
-    --warmup-steps=500 \
-    --eval-interval=200 \
-    --save-interval=2000 \
-    --save-folder="../ckpt/depthbench/pretrain-llama-250M-lr3e-4" \
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+if [[ -f "${REPO_ROOT}/scripts/load_local_env.sh" ]]; then
+    source "${REPO_ROOT}/scripts/load_local_env.sh"
+fi
+
+if [[ -f "${REPO_ROOT}/.venv/bin/activate" ]]; then
+    source "${REPO_ROOT}/.venv/bin/activate"
+fi
+
+torchrun \
+    --nproc_per_node="${NPROC_PER_NODE:-8}" \
+    --master_port="${MASTER_PORT:-35100}" \
+    --master_addr="${MASTER_ADDR:-localhost}" \
+    "${SCRIPT_DIR}/pretrain_llama_base.py" \
+    --run_name="${RUN_NAME:-pretrain-llama-250M-lr3e-4}" \
+    --model-config="${MODEL_CONFIG:-${REPO_ROOT}/configs/llama_250M_backbone.json}" \
+    --tokenizer-name-or-path="${TOKENIZER_PATH:-${REPO_ROOT}/pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json}" \
+    --train-data-glob="${TRAIN_DATA_GLOB:-${REPO_ROOT}/data/fineweb-edu/pre-tokenize/train/*.npy}" \
+    --eval-data-glob="${EVAL_DATA_GLOB:-${REPO_ROOT}/data/fineweb-edu/pre-tokenize/eval/*.npy}" \
+    --seed="${SEED:-42}" \
+    --max-steps="${MAX_STEPS:-5000}" \
+    --global-train-batch-size="${GLOBAL_TRAIN_BATCH_SIZE:-512}" \
+    --device-train-microbatch-size="${DEVICE_TRAIN_MICROBATCH_SIZE:-16}" \
+    --learning-rate="${LEARNING_RATE:-3e-4}" \
+    --warmup-steps="${WARMUP_STEPS:-500}" \
+    --eval-interval="${EVAL_INTERVAL:-200}" \
+    --save-interval="${SAVE_INTERVAL:-2000}" \
+    --save-folder="${SAVE_FOLDER:-${REPO_ROOT}/ckpt/depthbench/pretrain-llama-250M-lr3e-4}" \
+    --wandb-project="${WANDB_PROJECT:-}" \
+    --wandb-entity="${WANDB_ENTITY:-}" \
+    --swanlab-project="${SWANLAB_PROJECT:-}" \
+    --swanlab-workspace="${SWANLAB_WORKSPACE:-}" \
+    --swanlab-group="${SWANLAB_GROUP:-}" \
+    --swanlab-description="${SWANLAB_DESCRIPTION:-}" \
+    --swanlab-mode="${SWANLAB_MODE:-}" \
+    --swanlab-tags ${SWANLAB_TAGS:-} \
     --enable-layer-stats \
-    --layer-stats-interval 1 
+    --layer-stats-interval "${LAYER_STATS_INTERVAL:-1}" \
+    "$@"

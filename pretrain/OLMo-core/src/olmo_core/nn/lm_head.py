@@ -209,6 +209,7 @@ class LMHead(nn.Module):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
+        apply_norm: bool = True,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
         Applies the language modeling (LM) head to the input hidden states.
@@ -227,7 +228,7 @@ class LMHead(nn.Module):
         """
         B = x.shape[0]
 
-        h = self.norm(x) if self.norm is not None else x
+        h = self.norm(x) if self.norm is not None and apply_norm else x
 
         if isinstance(logits_to_keep, int):
             if logits_to_keep != 0:

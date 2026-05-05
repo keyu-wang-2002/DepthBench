@@ -14,23 +14,23 @@ fi
 
 torchrun \
     --nproc_per_node="${NPROC_PER_NODE:-8}" \
-    --master_port="${MASTER_PORT:-35100}" \
+    --master_port="${MASTER_PORT:-35101}" \
     --master_addr="${MASTER_ADDR:-localhost}" \
     "${SCRIPT_DIR}/pretrain_llama_base.py" \
-    --run_name="${RUN_NAME:-pretrain-llama-350M-lr3e-4}" \
-    --model-config="${MODEL_CONFIG:-${REPO_ROOT}/configs/llama_350M_backbone.json}" \
+    --run_name="${RUN_NAME:-pretrain-llama-130M-hc-s4-lr1e-3}" \
+    --model-config="${MODEL_CONFIG:-${REPO_ROOT}/configs/llama_130M_hc.json}" \
     --tokenizer-name-or-path="${TOKENIZER_PATH:-${REPO_ROOT}/pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json}" \
     --train-data-glob="${TRAIN_DATA_GLOB:-${REPO_ROOT}/data/fineweb-edu/pre-tokenize/train/*.npy}" \
     --eval-data-glob="${EVAL_DATA_GLOB:-${REPO_ROOT}/data/fineweb-edu/pre-tokenize/eval/*.npy}" \
     --seed="${SEED:-42}" \
-    --max-steps="${MAX_STEPS:-7000}" \
+    --max-steps="${MAX_STEPS:-2600}" \
     --global-train-batch-size="${GLOBAL_TRAIN_BATCH_SIZE:-512}" \
     --device-train-microbatch-size="${DEVICE_TRAIN_MICROBATCH_SIZE:-16}" \
-    --learning-rate="${LEARNING_RATE:-3e-4}" \
-    --warmup-steps="${WARMUP_STEPS:-700}" \
+    --learning-rate="${LEARNING_RATE:-1e-3}" \
+    --warmup-steps="${WARMUP_STEPS:-260}" \
     --eval-interval="${EVAL_INTERVAL:-200}" \
-    --save-interval="${SAVE_INTERVAL:-3000}" \
-    --save-folder="${SAVE_FOLDER:-${REPO_ROOT}/ckpt/depthbench/pretrain-llama-350M-lr3e-4}" \
+    --save-interval="${SAVE_INTERVAL:-1000}" \
+    --save-folder="${SAVE_FOLDER:-${REPO_ROOT}/ckpt/depthbench/pretrain-llama-130M-hc-s4-lr1e-3}" \
     --wandb-project="${WANDB_PROJECT:-}" \
     --wandb-entity="${WANDB_ENTITY:-}" \
     --swanlab-project="${SWANLAB_PROJECT:-}" \

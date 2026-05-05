@@ -10,6 +10,7 @@ from olmo_core.distributed.utils import get_rank
 from .beaker import BeakerCallback
 from .callback import Callback
 from .comet import CometCallback
+from .swanlab import SwanLabCallback
 from .wandb import WandBCallback
 
 log = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ class ConfigSaverCallback(Callback):
         self._config = config
         for callback_name, callback in self.trainer.callbacks.items():
             if (
-                isinstance(callback, (WandBCallback, CometCallback, BeakerCallback))
+                isinstance(callback, (WandBCallback, SwanLabCallback, CometCallback, BeakerCallback))
                 and callback.config is None
             ):
                 log.info(

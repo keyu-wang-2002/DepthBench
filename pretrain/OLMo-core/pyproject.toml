@@ -66,8 +66,9 @@ fa4 = ["flash-attn-4>=4.0.0b4 ; sys_platform == 'linux'"]
 fla = ["flash-linear-attention>=0.4.1"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers"]
+swanlab = ["swanlab[dashboard]"]
 wandb = ["wandb"]
-all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,fa4,fla,torchao,transformers,wandb]"]
+all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,fa4,fla,torchao,transformers,swanlab,wandb]"]
 
 [tool.uv]
 environments = [

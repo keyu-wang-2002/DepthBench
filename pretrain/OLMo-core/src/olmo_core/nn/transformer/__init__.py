@@ -12,6 +12,8 @@ from .block import (
     TransformerBlockBase,
 )
 from .config import (
+    HyperConnectionsConfig,
+    HyperConnectionsKind,
     TransformerActivationCheckpointingMode,
     TransformerBlockConfig,
     TransformerBlockType,
@@ -26,6 +28,8 @@ __all__ = [
     "TransformerType",
     "TransformerConfig",
     "Transformer",
+    "HyperConnectionsKind",
+    "HyperConnectionsConfig",
     "NormalizedTransformer",
     "MoETransformer",
     "MoEHybridTransformerBlockBase",

@@ -37,6 +37,7 @@ from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
 from olmo_core.nn.rope import RoPEConfig
 from olmo_core.nn.transformer import (
+    HyperConnectionsConfig,
     MoEHybridTransformerBlockBase,
     MoEReorderedNormTransformerBlock,
     MoETransformer,
@@ -140,6 +141,25 @@ def test_small_ngpt_builder_config(init_device, device):
 
     # Make sure all weights are normalized in the embedding dimension.
     check_ngpt_matrices(model, config.d_model)
+
+
+@pytest.mark.parametrize("kind", ["hc", "mhc"])
+def test_small_llama_builder_with_hyper_connections(kind: str):
+    config = TransformerConfig.llama_like(
+        d_model=128,
+        vocab_size=16_000,
+        n_layers=2,
+        n_heads=8,
+        fused_ops=False,
+        dtype=DType.float32,
+        hyper_connections=HyperConnectionsConfig(kind=kind, num_residual_streams=4),
+    )
+
+    model = config.build(init_device="cpu")
+    model.init_weights(device=torch.device("cpu"), max_seq_len=128)
+
+    logits = model(input_ids=get_transformer_inputs())
+    assert logits.shape == (1, 128, 16_000)
 
 
 def run_ngpt_with_fsdp2():

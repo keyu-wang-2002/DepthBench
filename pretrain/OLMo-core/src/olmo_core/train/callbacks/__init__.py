@@ -28,6 +28,7 @@ from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
 from .stability_monitor import StabilityMonitorCallback
+from .swanlab import SwanLabCallback
 from .wandb import WandBCallback
 
 __all__ = [
@@ -52,6 +53,7 @@ __all__ = [
     "SequenceLengthSchedulerCallback",
     "SpeedMonitorCallback",
     "StabilityMonitorCallback",
+    "SwanLabCallback",
     "WandBCallback",
     "BeakerCallback",
     "BatchSizeSchedulerCallback",
