@@ -21,6 +21,98 @@ from analysis_utils import (
 def estimate_backward_passes(num_layers: int, hidden_size: int) -> int:
     return num_layers * hidden_size
 
+def compute_mean_layer_jacobian_tokenwise(
+    model,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    device: str,
+    layer_idx: int,
+) -> torch.Tensor:
+    """
+    too expensive, abandoned
+    """
+    model.eval()
+    layers = get_decoder_layers(model)
+    hidden_size = get_hidden_size(model)
+
+    captured_input = {"tensor": None}
+
+    def forward_hook(module, module_input, module_output):
+        del module_output
+        layer_input = module_input[0] if isinstance(module_input, tuple) else module_input
+        captured_input["tensor"] = layer_input
+
+    hook_handle = layers[layer_idx].register_forward_hook(forward_hook)
+
+    batch_size = input_ids.shape[0]
+    micro_batch_size = min(2, batch_size)
+    num_micro_batches = (batch_size + micro_batch_size - 1) // micro_batch_size
+
+    jacobian_sum = torch.zeros(hidden_size, hidden_size)
+    total_positions = 0
+
+    try:
+        with torch.enable_grad():
+            for mb_idx in range(num_micro_batches):
+                start_idx = mb_idx * micro_batch_size
+                end_idx = min(start_idx + micro_batch_size, batch_size)
+
+                micro_input_ids = input_ids[start_idx:end_idx].to(device)
+                micro_attention_mask = attention_mask[start_idx:end_idx].to(device).bool()
+                captured_input["tensor"] = None
+
+                outputs = model_forward(
+                    model,
+                    input_ids=micro_input_ids,
+                    attention_mask=micro_attention_mask,
+                    output_hidden_states=True,
+                    use_cache=False,
+                )
+
+                layer_input = captured_input["tensor"]
+                layer_output = normalize_layer_output(outputs.hidden_states[layer_idx + 1])
+
+                if layer_input is None or layer_output is None:
+                    continue
+
+                seq_len = layer_output.shape[1]
+
+                for token_idx in range(seq_len):
+                    valid_batch = micro_attention_mask[:, token_idx]
+                    if not valid_batch.any():
+                        continue
+
+                    total_positions += int(valid_batch.sum().item())
+
+                    for hidden_idx in range(hidden_size):
+                        grad_output = torch.zeros_like(layer_output)
+
+                        grad_output[valid_batch, token_idx, hidden_idx] = 1.0
+
+                        grad = torch.autograd.grad(
+                            layer_output,
+                            layer_input,
+                            grad_outputs=grad_output,
+                            retain_graph=True,
+                            create_graph=False,
+                        )[0]
+
+                        local_grad = grad[valid_batch, token_idx, :]  # [num_valid, hidden]
+
+                        jacobian_sum[:, hidden_idx] += local_grad.detach().cpu().sum(dim=0)
+
+                del outputs
+
+                if device.startswith("cuda"):
+                    torch.cuda.empty_cache()
+    finally:
+        hook_handle.remove()
+
+    if total_positions == 0:
+        return torch.zeros(hidden_size, hidden_size)
+
+    return jacobian_sum / total_positions
+
 
 def compute_mean_layer_jacobian(
     model,
