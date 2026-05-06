@@ -221,7 +221,7 @@ Prepare the dataset with:
 python3 eval/finetune/prepare_commonsense170k.py \
   --output-dir data/commonsense-170k-olmocore \
   --tokenizer-name-or-path ./pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json \
-  --max-seq-len 2048 \
+  --max-seq-len 512 \
   --part-size 1000000 \
   --seed 42
 ```
