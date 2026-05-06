@@ -119,10 +119,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=str, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--output-prefix", type=str, default="calibration")
     parser.add_argument("--tokenizer-name-or-path", type=str, default=DEFAULT_TOKENIZER_PATH)
-    parser.add_argument("--vocab-size", type=int, default=50280)
+    parser.add_argument("--vocab-size", type=int, default=None)
     parser.add_argument("--bos-token-id", type=int, default=None)
-    parser.add_argument("--eos-token-id", type=int, default=50279)
-    parser.add_argument("--pad-token-id", type=int, default=1)
+    parser.add_argument("--eos-token-id", type=int, default=None)
+    parser.add_argument("--pad-token-id", type=int, default=None)
     parser.add_argument("--target-total-tokens", type=int, default=TARGET_TOTAL_TOKENS)
     parser.add_argument(
         "--sample-length-mode",

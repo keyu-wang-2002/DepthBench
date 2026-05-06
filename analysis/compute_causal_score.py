@@ -27,7 +27,7 @@ def compute_global_causal_score(causal_effect_matrix: np.ndarray) -> tuple[float
 
 def main():
     parser = argparse.ArgumentParser(description="Compute causal layer scores")
-    parser.add_argument("--model_path", type=str, required=True, help="HF model dir or OLMo checkpoint dir")
+    parser.add_argument("--model_path", type=str, required=True, help="OLMo-core checkpoint dir")
     parser.add_argument("--output_dir", type=str, default="./causal_score_results", help="Directory to save results")
     parser.add_argument("--num_samples", type=int, default=16, help="Number of token chunks to evaluate")
     parser.add_argument("--seq_length", type=int, default=256, help="Token chunk length")
@@ -37,51 +37,34 @@ def main():
         type=str,
         default="auto",
         choices=["auto", "float32", "float16", "bfloat16"],
-        help="Load dtype for the HF model",
+        help="Load dtype for the model",
     )
     parser.add_argument("--text-file", type=str, default=None, help="Optional UTF-8 text file used to build samples")
     parser.add_argument("--prompt", action="append", default=None, help="Optional prompt text; can be repeated")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for sampling")
-    parser.add_argument("--tokenizer-id", type=str, default=None, help="Optional tokenizer ID used during conversion")
+    parser.add_argument("--tokenizer-id", type=str, default=None, help="Optional tokenizer override")
     parser.add_argument(
         "--max-sequence-length",
         type=int,
         default=None,
-        help="Optional max_position_embeddings override during conversion",
-    )
-    parser.add_argument(
-        "--skip-conversion-validation",
-        action="store_true",
-        help="Skip logits validation when auto-converting OLMo checkpoints to HF",
-    )
-    parser.add_argument(
-        "--model-backend",
-        type=str,
-        default="auto",
-        choices=["auto", "olmo_core", "hf"],
-        help="Model loading backend. 'auto' prefers native OLMo-core checkpoints.",
+        help="Optional tokenizer model_max_length override",
     )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    model, tokenizer, device, model_dtype, resolved_model_path, was_converted = load_model_and_tokenizer(
+    model, tokenizer, device, model_dtype, resolved_model_path = load_model_and_tokenizer(
         model_path=args.model_path,
-        output_dir=output_dir,
         device=args.device,
         dtype=args.dtype,
         tokenizer_id=args.tokenizer_id,
         max_sequence_length=args.max_sequence_length,
-        skip_conversion_validation=args.skip_conversion_validation,
-        model_backend=args.model_backend,
     )
     num_layers = len(get_decoder_layers(model))
 
     print(f"Loaded model from: {resolved_model_path}")
     print(f"Model has {num_layers} layers")
-    if was_converted:
-        print("Input checkpoint was auto-converted to Hugging Face format for analysis.")
 
     sample_data = build_sample_batch(
         tokenizer=tokenizer,
@@ -116,7 +99,6 @@ def main():
     results = {
         "model_path": args.model_path,
         "resolved_model_path": resolved_model_path,
-        "was_converted": was_converted,
         "num_layers": num_layers,
         "num_samples": args.num_samples,
         "seq_length": args.seq_length,

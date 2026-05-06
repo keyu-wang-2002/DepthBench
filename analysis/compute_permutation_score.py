@@ -37,7 +37,7 @@ def build_layer_pairs(args, num_layers: int):
 
 def main():
     parser = argparse.ArgumentParser(description="Compute permutation layer scores")
-    parser.add_argument("--model_path", type=str, required=True, help="HF model dir or OLMo checkpoint dir")
+    parser.add_argument("--model_path", type=str, required=True, help="OLMo-core checkpoint dir")
     parser.add_argument(
         "--output_dir",
         type=str,
@@ -52,7 +52,7 @@ def main():
         type=str,
         default="auto",
         choices=["auto", "float32", "float16", "bfloat16"],
-        help="Load dtype for the HF model",
+        help="Load dtype for the model",
     )
     parser.add_argument("--text-file", type=str, default=None, help="Optional UTF-8 text file used to build samples")
     parser.add_argument("--prompt", action="append", default=None, help="Optional prompt text; can be repeated")
@@ -60,46 +60,29 @@ def main():
     parser.add_argument("--skip_layer_1_with_next", action="store_true", help="Only test layer 1 with layer 2")
     parser.add_argument("--skip_layer_2_with_rest", action="store_true", help="Only test layer 2 with layers 2-n")
     parser.add_argument("--skip_layer_3_with_rest", action="store_true", help="Only test layer 3 with layers 3-n")
-    parser.add_argument("--tokenizer-id", type=str, default=None, help="Optional tokenizer ID used during conversion")
+    parser.add_argument("--tokenizer-id", type=str, default=None, help="Optional tokenizer override")
     parser.add_argument(
         "--max-sequence-length",
         type=int,
         default=None,
-        help="Optional max_position_embeddings override during conversion",
-    )
-    parser.add_argument(
-        "--skip-conversion-validation",
-        action="store_true",
-        help="Skip logits validation when auto-converting OLMo checkpoints to HF",
-    )
-    parser.add_argument(
-        "--model-backend",
-        type=str,
-        default="auto",
-        choices=["auto", "olmo_core", "hf"],
-        help="Model loading backend. 'auto' prefers native OLMo-core checkpoints.",
+        help="Optional tokenizer model_max_length override",
     )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    model, tokenizer, device, model_dtype, resolved_model_path, was_converted = load_model_and_tokenizer(
+    model, tokenizer, device, model_dtype, resolved_model_path = load_model_and_tokenizer(
         model_path=args.model_path,
-        output_dir=output_dir,
         device=args.device,
         dtype=args.dtype,
         tokenizer_id=args.tokenizer_id,
         max_sequence_length=args.max_sequence_length,
-        skip_conversion_validation=args.skip_conversion_validation,
-        model_backend=args.model_backend,
     )
     num_layers = len(get_decoder_layers(model))
 
     print(f"Loaded model from: {resolved_model_path}")
     print(f"Model has {num_layers} layers")
-    if was_converted:
-        print("Input checkpoint was auto-converted to Hugging Face format for analysis.")
 
     sample_data = build_sample_batch(
         tokenizer=tokenizer,
@@ -138,7 +121,6 @@ def main():
     results = {
         "model_path": args.model_path,
         "resolved_model_path": resolved_model_path,
-        "was_converted": was_converted,
         "baseline_loss": float(baseline_loss),
         "num_layers": num_layers,
         "num_samples": args.num_samples,

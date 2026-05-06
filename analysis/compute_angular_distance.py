@@ -54,7 +54,7 @@ def collect_hidden_states(
                     attention_mask=micro_attention_mask,
                     output_hidden_states=True,
                     use_cache=False,
-            )
+                )
 
             if mb_idx == 0:
                 for hidden_state in outputs.hidden_states:
@@ -189,7 +189,7 @@ def summarize_pairs(matrix: np.ndarray, smallest: bool, top_k: int):
 
 def main():
     parser = argparse.ArgumentParser(description="Compute and visualize layer-wise angular distance")
-    parser.add_argument("--model_path", type=str, required=True, help="HF model dir or OLMo checkpoint dir")
+    parser.add_argument("--model_path", type=str, required=True, help="OLMo-core checkpoint dir")
     parser.add_argument(
         "--output_dir",
         type=str,
@@ -214,46 +214,29 @@ def main():
         action="store_true",
         help="Exclude embedding hidden state. By default x^0 (embedding output) is included.",
     )
-    parser.add_argument("--tokenizer-id", type=str, default=None, help="Optional tokenizer ID used during conversion")
+    parser.add_argument("--tokenizer-id", type=str, default=None, help="Optional tokenizer override")
     parser.add_argument(
         "--max-sequence-length",
         type=int,
         default=None,
-        help="Optional max_position_embeddings override during conversion",
-    )
-    parser.add_argument(
-        "--skip-conversion-validation",
-        action="store_true",
-        help="Skip logits validation when auto-converting OLMo checkpoints to HF",
-    )
-    parser.add_argument(
-        "--model-backend",
-        type=str,
-        default="auto",
-        choices=["auto", "olmo_core", "hf"],
-        help="Model loading backend. 'auto' prefers native OLMo-core checkpoints.",
+        help="Optional tokenizer model_max_length override",
     )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    model, tokenizer, device, model_dtype, resolved_model_path, was_converted = load_model_and_tokenizer(
+    model, tokenizer, device, model_dtype, resolved_model_path = load_model_and_tokenizer(
         model_path=args.model_path,
-        output_dir=output_dir,
         device=args.device,
         dtype=args.dtype,
         tokenizer_id=args.tokenizer_id,
         max_sequence_length=args.max_sequence_length,
-        skip_conversion_validation=args.skip_conversion_validation,
-        model_backend=args.model_backend,
     )
 
     decoder_layers = get_decoder_layers(model)
     print(f"Loaded model from: {resolved_model_path}")
     print(f"Model has {len(decoder_layers)} decoder layers")
-    if was_converted:
-        print("Input checkpoint was auto-converted to Hugging Face format for analysis.")
 
     sample_data = build_sample_batch(
         tokenizer=tokenizer,
@@ -307,7 +290,6 @@ def main():
     results = {
         "model_path": args.model_path,
         "resolved_model_path": resolved_model_path,
-        "was_converted": was_converted,
         "num_decoder_layers": len(decoder_layers),
         "num_analyzed_layers": len(analyzed_hidden_states),
         "exclude_embeddings": args.exclude_embeddings,

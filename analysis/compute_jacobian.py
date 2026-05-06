@@ -18,6 +18,10 @@ from analysis_utils import (
 )
 
 
+def estimate_backward_passes(num_layers: int, hidden_size: int) -> int:
+    return num_layers * hidden_size
+
+
 def compute_mean_layer_jacobian(
     model,
     input_ids: torch.Tensor,
@@ -145,7 +149,7 @@ def plot_jacobian_norms(norms: List[float], output_path: Path):
 
 def main():
     parser = argparse.ArgumentParser(description="Compute layer-wise ||J-I||_F")
-    parser.add_argument("--model_path", type=str, required=True, help="HF model dir or OLMo checkpoint dir")
+    parser.add_argument("--model_path", type=str, required=True, help="OLMo-core checkpoint dir")
     parser.add_argument("--output_dir", type=str, default="./jacobian_results", help="Directory to save outputs")
     parser.add_argument("--num_samples", type=int, default=16, help="Number of token chunks to evaluate")
     parser.add_argument("--seq_length", type=int, default=512, help="Token chunk length")
@@ -160,40 +164,46 @@ def main():
     parser.add_argument("--text-file", type=str, default=None, help="Optional UTF-8 text file used to build samples")
     parser.add_argument("--prompt", action="append", default=None, help="Optional prompt text; can be repeated")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for sampling")
-    parser.add_argument("--tokenizer-id", type=str, default=None, help="Optional tokenizer ID used during conversion")
+    parser.add_argument("--tokenizer-id", type=str, default=None, help="Optional tokenizer override")
     parser.add_argument(
         "--max-sequence-length",
         type=int,
         default=None,
-        help="Optional max_position_embeddings override during conversion",
+        help="Optional tokenizer model_max_length override",
     )
     parser.add_argument(
-        "--skip-conversion-validation",
+        "--max-hidden-size-without-force",
+        type=int,
+        default=1024,
+        help="Refuse to run the full Jacobian computation above this hidden size unless --force-large-run is set.",
+    )
+    parser.add_argument(
+        "--force-large-run",
         action="store_true",
-        help="Skip logits validation when auto-converting OLMo checkpoints to HF",
-    )
-    parser.add_argument(
-        "--model-backend",
-        type=str,
-        default="auto",
-        choices=["auto", "olmo_core", "hf"],
-        help="Model loading backend. 'auto' prefers native OLMo-core checkpoints.",
+        help="Allow the expensive Jacobian computation for large hidden sizes.",
     )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    model, tokenizer, device, _, resolved_model_path, was_converted = load_model_and_tokenizer(
+    model, tokenizer, device, _, resolved_model_path = load_model_and_tokenizer(
         model_path=args.model_path,
-        output_dir=output_dir,
         device=args.device,
         dtype=args.dtype,
         tokenizer_id=args.tokenizer_id,
         max_sequence_length=args.max_sequence_length,
-        skip_conversion_validation=args.skip_conversion_validation,
-        model_backend=args.model_backend,
     )
+    num_layers = len(get_decoder_layers(model))
+    hidden_size = get_hidden_size(model)
+    estimated_grad_calls = estimate_backward_passes(num_layers, hidden_size)
+
+    if hidden_size > args.max_hidden_size_without_force and not args.force_large_run:
+        raise ValueError(
+            "Jacobian analysis is intentionally blocked for large models by default. "
+            f"hidden_size={hidden_size} exceeds --max-hidden-size-without-force={args.max_hidden_size_without_force}. "
+            "Re-run with --force-large-run if you really want the full computation."
+        )
 
     sample_data = build_sample_batch(
         tokenizer=tokenizer,
@@ -216,7 +226,6 @@ def main():
     results = {
         "model_path": args.model_path,
         "resolved_model_path": resolved_model_path,
-        "was_converted": was_converted,
         "num_layers": len(jacobian_norms),
         "num_samples": args.num_samples,
         "seq_length": args.seq_length,
@@ -229,6 +238,11 @@ def main():
         json.dump(results, f, indent=2)
 
     print(f"Loaded model from: {resolved_model_path}")
+    print(
+        "Jacobian run summary: "
+        f"layers={num_layers}, hidden_size={hidden_size}, "
+        f"estimated_grad_calls={estimated_grad_calls}"
+    )
     print(f"Saved results to {output_dir}")
 
 

@@ -13,8 +13,11 @@ python -m pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index
 
 cd DepthBench/pretrain/OLMo-core
 python -m pip install -e ".[wandb,transformers]"
-python -m pip install datasets pyarrow
+python -m pip install datasets pyarrow cached_path
 pip install torch transformers numpy tqdm matplotlib seaborn
+
+cd DepthBench/eval/lm-evaluation-harness
+python -m pip install -e .
 ```
 
 ## Data Preparation
@@ -65,25 +68,22 @@ The following model configs are currently available under: [`./configs`](./confi
 
 | Size | Hidden | Intermediate | Heads | Layers | Data Volume | Batch Size | Sequence Length | Steps |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| 60M | 512 | 1376 | 8 | 8 | 1.5B | 512 | 2048 | 1.4k |
-| 130M | 768 | 2048 | 12 | 12 | 2.7B | 512 | 2048 | 2.6k |
-| 250M | 896 | 2560 | 14 | 16 | 5.2B | 512 | 2048 | 5.0k |
-| 350M | 1024 | 2736 | 16 | 24 | 7.3B | 512 | 2048 | 7.0k |
-| 1B | 2048 | 5461 | 32 | 24 | 21.0B | 512 | 2048 | 20.0k |
+| 350M | 1024 | 2736 | 16 | 24 | 7.3B | 512 | 2048 | 7k |
+| 1B | 2048 | 5461 | 32 | 24 | 21.0B | 512 | 2048 | 20k |
 
 ### 350M Aspect-Ratio Variants
 
-The following 350M-family configs keep `#heads` and `intermediate_size/d_model = 8/3` fixed while varying only `d_model` and `n_layer` (Aspect Ratio `d_model / n_layer`) to probe depth/width scaling at roughly the same parameter budget. The training configs follow the standard backbone.
+The following 350M-family configs keep `#heads` and `intermediate_size/d_model = 8/3` fixed while varying `d_model` and `n_layer` (Aspect Ratio `d_model / n_layer`) to probe depth/width scaling at roughly the same parameter budget.  The training configs follow the standard backbone.
 
 | Tier | Hidden | Intermediate | Heads | Layers | Head Dim | Aspect Ratio |
 |---|---:|---:|---:|---:|---:|---:|
-| Ultra shallow-350M | 2240 | 5984 | 16 | 4 | 140 | 560.00 |
-| Very shallow-350M | 1680 | 4480 | 16 | 8 | 105 | 210.00 |
-| Shallow-350M | 1232 | 3296 | 16 | 16 | 77 | 77.00 |
+| Ultra shallow-350M | 2240 | 5984 | 16 | 4 | 144 | 560.00 |
+| Very shallow-350M | 1680 | 4480 | 16 | 8 | 104 | 210.00 |
+| Shallow-350M | 1232 | 3296 | 16 | 16 | 80 | 77.00 |
 | Standard-350M | 1024 | 2736 | 16 | 24 | 64 | 42.67 |
-| Deeper-350M | 848 | 2272 | 16 | 36 | 53 | 23.56 |
-| Deep-350M | 752 | 2016 | 16 | 46 | 47 | 16.35 |
-| Very deep-350M | 688 | 1840 | 16 | 56 | 43 | 12.29 |
+| Deeper-350M | 848 | 2272 | 16 | 36 | 56 | 23.56 |
+| Deep-350M | 752 | 2016 | 16 | 46 | 48 | 16.35 |
+| Very deep-350M | 688 | 1840 | 16 | 56 | 40 | 12.29 |
 | Extreme deep-350M | 512 | 1376 | 16 | 104 | 32 | 4.92 |
 
 ## Training Script
@@ -92,39 +92,19 @@ Example:
 
 ```bash
 cd ./examples
-bash pretrain_llama_130M_base.sh
-bash pretrain_llama_250M_base.sh
 bash pretrain_llama_350M_base.sh
 bash pretrain_llama_1B_base.sh
 ```
 
-Note: DepthBench now supports per-layer monitoring of hidden-state statistics during pretraining. For each transformer block, we record statistics for:
+Note: DepthBench now supports per-layer monitoring of hidden-state statistics during pretraining. For each transformer block, we record statistics for both `forward`, the block output hidden state,
+and `backward`, the activation gradient on the same hidden state.
 
-- `forward`: the block output hidden state
-- `backward`: the activation gradient on the same hidden state
-
-For both directions, the following statistics are logged:
-
-- `mean`
-- `variance`
-- `magnitude = abs().mean()`
-- `norm = l2_norm`
+For both directions, the following statistics are logged: `mean`, `variance`, `magnitude = abs().mean()`, `norm = l2_norm`
 
 This adds two CLI flags:
 
 - `--enable-layer-stats`
 - `--layer-stats-interval 1` means record every step. Set it to a larger value to reduce logging overhead.
-
-Metric names follow this pattern:
-
-```text
-train/layer_stats/block_00/forward/mean
-train/layer_stats/block_00/forward/variance
-train/layer_stats/block_00/forward/magnitude
-train/layer_stats/block_00/forward/norm
-train/layer_stats/block_00/backward/mean
-...
-```
 
 These metrics are automatically logged to W&B when W&B is enabled. W&B may create many charts because every block and every statistic is logged separately. A convenient way to view them is to create multi-metric panels with regex, for example:
 
@@ -133,27 +113,48 @@ These metrics are automatically logged to W&B when W&B is enabled. W&B may creat
 ^train/layer_stats/block_\d+/backward/norm$
 ```
 
-Add swanlab: TODO
 
 
 ## Analysis
 
-This directory contains scripts for running DepthBench analysis metrics on either:
+This directory contains scripts for running DepthBench analysis metrics directly on native `OLMo-core` checkpoints.
 
-- a native `OLMo-core` checkpoint via `--model-backend olmo_core`
-- a Hugging Face model directory via `--model-backend hf`
+Build calibration text first:
 
-I recommend to directly use `OLMo-core` checkpoint via `--model-backend olmo_core`.  There are some potential risks when first converting `OLMo-core` checkpoint to `hf` checkpoint and then using `--model-backend hf` for analysis, refering issue: https://github.com/pUmpKin-Co/SparsityAndCoD/issues/2
+```bash
+python data_utils/build_calibration_data.py \
+  --source fineweb_local \
+  --source c4 \
+  --source dolma \
+  --output-dir data/calibration \
+  --output-prefix calibration \
+  --tokenizer-name-or-path ./pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json \
+  --target-total-tokens 262144 \
+  --sample-length-mode fixed \
+  --sample-length 512 \
+  --shuffle-samples
+```
+
+This writes `data/calibration/calibration.txt`, `data/calibration/calibration.jsonl`, and
+`data/calibration/calibration.summary.json`. Use the `.txt` file in the analysis commands below.
+
+Common options:
+
+- `--source`, repeat to mix multiple corpora; defaults to `fineweb_local`, `c4`, and `dolma`
+- `--sample-length-mode {fixed,uniform}`, choose fixed-length or variable-length text windows
+- `--sample-length`, token length for fixed mode
+- `--min-sample-length` and `--max-sample-length`, token-length range for uniform mode
+- `--target-total-tokens`, total token budget across all sources
+- `--shuffle-samples`, shuffle collected samples before writing the output files
 
 
 Run angular distance:
 
 ```bash
-python "${PROJECT_ROOT}/analysis/compute_angular_distance.py" \
-  --model_path "${CHECKPOINT_DIR}" \
-  --model-backend olmo_core \
-  --output_dir "${RUN_ROOT}/angular_distance" \
-  --text-file "${CALIBRATION_TEXT}" \
+python analysis/compute_angular_distance.py \
+  --model_path ckpt/path/to/ckpt \
+  --output_dir analysis/results/angular_distance \
+  --text-file data/calibration/calibration.txt \
   --num_samples 1024 \
   --seq_length 512
 ```
@@ -161,11 +162,10 @@ python "${PROJECT_ROOT}/analysis/compute_angular_distance.py" \
 Run Jacobian analysis:
 
 ```bash
-python "${PROJECT_ROOT}/analysis/compute_jacobian.py" \
-  --model_path "${CHECKPOINT_DIR}" \
-  --model-backend olmo_core \
-  --output_dir "${RUN_ROOT}/jacobian" \
-  --text-file "${CALIBRATION_TEXT}" \
+python analysis/compute_jacobian.py \
+  --model_path ckpt/path/to/ckpt \
+  --output_dir analysis/results/jacobian \
+  --text-file data/calibration/calibration.txt \
   --num_samples 128 \
   --seq_length 512
 ```
@@ -173,11 +173,10 @@ python "${PROJECT_ROOT}/analysis/compute_jacobian.py" \
 Run causal score:
 
 ```bash
-python "${PROJECT_ROOT}/analysis/compute_casual_score.py" \
-  --model_path "${CHECKPOINT_DIR}" \
-  --model-backend olmo_core \
-  --output_dir "${RUN_ROOT}/casual_score" \
-  --text-file "${CALIBRATION_TEXT}" \
+python analysis/compute_causal_score.py \
+  --model_path ckpt/path/to/ckpt \
+  --output_dir analysis/results/causal_score \
+  --text-file data/calibration/calibration.txt \
   --num_samples 128 \
   --seq_length 512
 ```
@@ -185,11 +184,10 @@ python "${PROJECT_ROOT}/analysis/compute_casual_score.py" \
 Run permutation score:
 
 ```bash
-python "${PROJECT_ROOT}/analysis/compute_permutation_score.py" \
-  --model_path "${CHECKPOINT_DIR}" \
-  --model-backend olmo_core \
-  --output_dir "${RUN_ROOT}/permutation_score" \
-  --text-file "${CALIBRATION_TEXT}" \
+python analysis/compute_permutation_score.py \
+  --model_path ckpt/path/to/ckpt \
+  --output_dir analysis/results/permutation_score \
+  --text-file data/calibration/calibration.txt \
   --num_samples 128 \
   --seq_length 512
 ```
@@ -197,13 +195,112 @@ python "${PROJECT_ROOT}/analysis/compute_permutation_score.py" \
 Run usefulness score:
 
 ```bash
-python "${PROJECT_ROOT}/analysis/compute_usefulness_score.py" \
-  --model_path "${CHECKPOINT_DIR}" \
-  --model-backend olmo_core \
-  --output_dir "${RUN_ROOT}/usefulness_score" \
-  --text-file "${CALIBRATION_TEXT}" \
+python analysis/compute_usefulness_score.py \
+  --model_path ckpt/path/to/ckpt \
+  --output_dir analysis/results/usefulness_score \
+  --text-file data/calibration/calibration.txt \
   --num_samples 1024 \
   --seq_length 512
 ```
 
-TODO: add downstream 
+## Downstream Evaluation
+
+### Supervised Finetuning
+
+This repo includes a minimal OLMo-core based SFT pipeline for finetuning a pre-train checkpoint
+on `Commonsense170K`.
+
+The main entrypoints are:
+
+- [`eval/finetune/prepare_commonsense170k.py`](./eval/finetune/prepare_commonsense170k.py) for dataset preparation
+- [`eval/finetune/sft_llama_base.py`](./eval/finetune/sft_llama_base.py) for training
+
+Prepare the dataset with:
+
+```bash
+python3 eval/finetune/prepare_commonsense170k.py \
+  --output-dir data/commonsense-170k-olmocore \
+  --tokenizer-name-or-path ./pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json \
+  --max-seq-len 2048 \
+  --part-size 1000000 \
+  --seed 42
+```
+
+Common options:
+
+- `--dataset-name`, default `zwhe99/commonsense_170k`
+- `--dataset-split`, default `train`
+- `--max-samples`, use a subset for quick debugging
+
+The dataset is written as flat `token_ids_part_*.npy` and `labels_mask_part_*.npy` files. The
+supervised loss is applied only on the response span and the final EOS token.
+
+The prompt template is:
+
+```text
+Below is an instruction that describes a task. Write a response that appropriately completes the request.
+
+### Instruction:
+{instruction}
+
+### Response:
+```
+
+If `input` is non-empty, an additional `### Input:` section is inserted.
+
+Launch SFT with:
+
+```bash
+torchrun --nproc_per_node=8 eval/finetune/sft_llama_base.py \
+  --run-name llama-1B-commonsense170k-sft \
+  --model-config ./configs/llama_1B_backbone.json \
+  --pretrain-checkpoint ckpt/depthbench/pretrain-llama-1B-lr5e-4 \
+  --dataset-dir data/commonsense-170k-olmocore \
+  --save-folder ckpt/depthbench/llama-1B-commonsense170k-sft \
+  --tokenizer-name-or-path ./pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json \
+  --learning-rate 5e-5 \
+  --dataset-layout padded \
+  --disable-compile
+```
+
+Common options:
+
+- `--sequence-length`, default `512`
+- `--epochs`, default `3`
+- `--global-train-batch-size`, default `128`
+- `--device-train-microbatch-size`, default `16`
+- `--dataset-layout {packed,padded}`, default `padded`
+
+Typically, we use about 1/10 of the pre-train learning rate for SFT, or do a small sweep around
+that value.
+
+### Zero-shot Evaluation
+
+This repo supports zero-shot downstream evaluation directly from native `OLMo-core` checkpoints,
+without converting the checkpoint to Hugging Face format first.
+
+The current zero-shot task set is:
+
+- `openbookqa`
+- `winogrande`
+- `arc_challenge`
+- `arc_easy`
+- `hellaswag`
+- `social_iqa`
+- `piqa`
+
+The entrypoint is [`eval/run_zero_shot.py`](./eval/run_zero_shot.py), which uses:
+
+- [`eval/olmo_lm.py`](./eval/olmo_lm.py) as the adapter from native `OLMo-core` checkpoints to `lm-eval-harness`
+- the vendored [`eval/lm-evaluation-harness`](./eval/lm-evaluation-harness) task definitions
+
+Run zero-shot evaluation with:
+
+```bash
+python eval/run_zero_shot.py \
+  /path/to/checkpoint/step2600 \
+  --device cuda:0 \
+  --batch-size 32 \
+  --attention-backend torch \
+  --output-path /path/to/output/zero_shot_results.json
+```

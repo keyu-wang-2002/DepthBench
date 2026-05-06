@@ -54,10 +54,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=str, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--text-field", type=str, default="text")
     parser.add_argument("--tokenizer-name-or-path", type=str, default=DEFAULT_TOKENIZER_PATH)
-    parser.add_argument("--vocab-size", type=int, default=50280)
+    parser.add_argument("--vocab-size", type=int, default=None)
     parser.add_argument("--bos-token-id", type=int, default=None)
-    parser.add_argument("--eos-token-id", type=int, default=50279)
-    parser.add_argument("--pad-token-id", type=int, default=1)
+    parser.add_argument("--eos-token-id", type=int, default=None)
+    parser.add_argument("--pad-token-id", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=4096)
     parser.add_argument("--limit-train-files", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
@@ -90,12 +90,75 @@ def configure_logging(level: str) -> None:
     )
 
 
-def build_tokenizer_config(args: argparse.Namespace) -> TokenizerConfig:
+def choose_vocab_size(tokenizer) -> int:
+    if hasattr(tokenizer, "vocab_size") and tokenizer.vocab_size is not None:
+        return int(tokenizer.vocab_size)
+    if hasattr(tokenizer, "get_vocab_size"):
+        return int(tokenizer.get_vocab_size())
+    return int(len(tokenizer))
+
+
+def resolve_tokenizer_field(
+    *,
+    tokenizer_value: Optional[int],
+    override_value: Optional[int],
+    field_name: str,
+    required: bool,
+) -> Optional[int]:
+    if tokenizer_value is not None:
+        tokenizer_value = int(tokenizer_value)
+    if override_value is not None:
+        override_value = int(override_value)
+
+    if tokenizer_value is not None and override_value is not None and tokenizer_value != override_value:
+        raise ValueError(
+            f"Tokenizer {field_name} ({tokenizer_value}) does not match CLI override ({override_value}). "
+            f"Update the tokenizer or remove --{field_name.replace('_', '-')}."
+        )
+
+    if tokenizer_value is not None:
+        return tokenizer_value
+    if override_value is not None:
+        return override_value
+    if required:
+        raise ValueError(
+            f"Tokenizer is missing {field_name}. Provide --{field_name.replace('_', '-')} explicitly."
+        )
+    return None
+
+
+def build_tokenizer_config(args: argparse.Namespace, tokenizer) -> TokenizerConfig:
+    vocab_size = choose_vocab_size(tokenizer)
+    if args.vocab_size is not None and int(args.vocab_size) != vocab_size:
+        raise ValueError(
+            f"Tokenizer vocab size ({vocab_size}) does not match CLI override ({args.vocab_size}). "
+            "Update the tokenizer or remove --vocab-size."
+        )
+
+    bos_token_id = resolve_tokenizer_field(
+        tokenizer_value=getattr(tokenizer, "bos_token_id", None),
+        override_value=args.bos_token_id,
+        field_name="bos_token_id",
+        required=False,
+    )
+    eos_token_id = resolve_tokenizer_field(
+        tokenizer_value=getattr(tokenizer, "eos_token_id", None),
+        override_value=args.eos_token_id,
+        field_name="eos_token_id",
+        required=True,
+    )
+    pad_token_id = resolve_tokenizer_field(
+        tokenizer_value=getattr(tokenizer, "pad_token_id", None),
+        override_value=args.pad_token_id,
+        field_name="pad_token_id",
+        required=True,
+    )
+
     return TokenizerConfig(
-        vocab_size=args.vocab_size,
-        bos_token_id=args.bos_token_id,
-        eos_token_id=args.eos_token_id,
-        pad_token_id=args.pad_token_id,
+        vocab_size=vocab_size,
+        bos_token_id=bos_token_id,
+        eos_token_id=eos_token_id,
+        pad_token_id=pad_token_id,
         identifier=args.tokenizer_name_or_path,
     )
 
@@ -122,12 +185,6 @@ def load_hf_tokenizer(args: argparse.Namespace):
             local_files_only=tokenizer_path.exists(),
         )
 
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token_id = args.pad_token_id
-    if tokenizer.eos_token_id is None:
-        tokenizer.eos_token_id = args.eos_token_id
-    if tokenizer.bos_token_id is None and args.bos_token_id is not None:
-        tokenizer.bos_token_id = args.bos_token_id
     return tokenizer
 
 
@@ -425,13 +482,16 @@ def main() -> None:
     train_output_dir.mkdir(parents=True, exist_ok=True)
     eval_output_dir.mkdir(parents=True, exist_ok=True)
 
-    tokenizer_config = build_tokenizer_config(args)
-    np_dtype = infer_numpy_dtype(tokenizer_config.vocab_size)
     tokenizer = load_hf_tokenizer(args)
+    tokenizer_config = build_tokenizer_config(args, tokenizer)
+    np_dtype = infer_numpy_dtype(tokenizer_config.vocab_size)
 
     log.info("Repository root: %s", REPO_ROOT)
     log.info("Tokenizer: %s", args.tokenizer_name_or_path)
-    log.info("Tokenizer runtime vocab size: %s", len(tokenizer))
+    log.info("Resolved tokenizer vocab size: %s", tokenizer_config.vocab_size)
+    log.info("Resolved tokenizer eos token id: %s", tokenizer_config.eos_token_id)
+    log.info("Resolved tokenizer pad token id: %s", tokenizer_config.pad_token_id)
+    log.info("Resolved tokenizer bos token id: %s", tokenizer_config.bos_token_id)
     log.info("Configured dataset dtype: %s", np_dtype.name)
     worker_label = format_worker_label(args.train_worker_id, args.train_num_workers)
 

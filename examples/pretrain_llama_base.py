@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
+import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional, cast
+from typing import List, Optional, cast
 
 import rich
+from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
+DEPTHBENCH_ROOT = Path(__file__).resolve().parents[1]
+OLMO_CORE_SRC = DEPTHBENCH_ROOT / "pretrain" / "OLMo-core" / "src"
+for path in (DEPTHBENCH_ROOT, OLMO_CORE_SRC):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+from depthbench_utils.model_config import load_llama_like_kwargs
 from olmo_core.config import Config, DType
 from olmo_core.data import (
     NumpyDataLoaderConfig,
@@ -21,7 +30,6 @@ from olmo_core.data import (
 from olmo_core.data.numpy_dataset import NumpyDatasetConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank
-from olmo_core.nn.feed_forward import ActivationFunction, FeedForwardConfig, FeedForwardType
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup
 from olmo_core.train import (
@@ -54,37 +62,83 @@ TOKENIZER_PATH = f"{PROJECT_CODE_ROOT}/pretrain/OLMo-core/src/olmo_core/data/tok
 DEFAULT_MODEL_CONFIG_PATH = (
     f"{PROJECT_CODE_ROOT}/configs/llama_60M_backbone.json"
 )
-
-HF_TO_LLAMA_LIKE_KEY_MAP = {
-    "hidden_size": "d_model",
-    "num_hidden_layers": "n_layers",
-    "num_attention_heads": "n_heads",
-    "num_key_value_heads": "n_kv_heads",
-    "rms_norm_eps": "layer_norm_eps",
-    "torch_dtype": "dtype",
-    "initializer_range": "init_std",
+SPECIAL_TOKEN_CANDIDATES = {
+    "eos_token": ("<|endoftext|>", "</s>"),
+    "pad_token": ("<|padding|>", "<pad>"),
+    "bos_token": ("<s>", "<bos>"),
 }
 
-DIRECT_LLAMA_LIKE_KEYS = {
-    "d_model",
-    "vocab_size",
-    "n_layers",
-    "n_heads",
-    "n_kv_heads",
-    "head_dim",
-    "qk_norm",
-    "use_head_qk_norm",
-    "layer_norm_eps",
-    "rope_theta",
-    "no_global_rope",
-    "hidden_size_multiple_of",
-    "hidden_size_multiplier",
-    "fused_ops",
-    "use_flash",
-    "init_std",
-    "embedding_init_std",
-    "embed_scale",
-}
+
+def _token_exists(tokenizer, token: str) -> bool:
+    unk_token_id = getattr(tokenizer, "unk_token_id", None)
+    token_id = tokenizer.convert_tokens_to_ids(token)
+    return token_id is not None and token_id != unk_token_id
+
+
+def _ensure_special_tokens(tokenizer):
+    for token_attr, candidates in SPECIAL_TOKEN_CANDIDATES.items():
+        if getattr(tokenizer, f"{token_attr}_id", None) is not None:
+            continue
+        for candidate in candidates:
+            if _token_exists(tokenizer, candidate):
+                setattr(tokenizer, token_attr, candidate)
+                break
+    return tokenizer
+
+
+def load_hf_tokenizer(tokenizer_name_or_path: str):
+    tokenizer_path = Path(tokenizer_name_or_path).expanduser()
+    tokenizer_json_path = tokenizer_path / "tokenizer.json"
+
+    if tokenizer_path.is_file() and tokenizer_path.suffix == ".json":
+        return _ensure_special_tokens(
+            PreTrainedTokenizerFast(tokenizer_file=str(tokenizer_path))
+        )
+    if tokenizer_path.is_dir() and tokenizer_json_path.is_file():
+        return _ensure_special_tokens(
+            PreTrainedTokenizerFast(tokenizer_file=str(tokenizer_json_path))
+        )
+    return _ensure_special_tokens(
+        AutoTokenizer.from_pretrained(
+            tokenizer_name_or_path,
+            use_fast=True,
+            local_files_only=tokenizer_path.exists(),
+        )
+    )
+
+
+def choose_vocab_size(tokenizer) -> int:
+    if hasattr(tokenizer, "vocab_size") and tokenizer.vocab_size is not None:
+        return int(tokenizer.vocab_size)
+    if hasattr(tokenizer, "get_vocab_size"):
+        return int(tokenizer.get_vocab_size())
+    return int(len(tokenizer))
+
+
+def build_tokenizer_config(tokenizer_name_or_path: str) -> TokenizerConfig:
+    tokenizer = load_hf_tokenizer(tokenizer_name_or_path)
+    eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    pad_token_id = getattr(tokenizer, "pad_token_id", None)
+    bos_token_id = getattr(tokenizer, "bos_token_id", None)
+
+    if eos_token_id is None:
+        raise ValueError(
+            f"Tokenizer '{tokenizer_name_or_path}' has no eos_token_id. "
+            "Use a tokenizer with EOS configured before pretraining."
+        )
+    if pad_token_id is None:
+        raise ValueError(
+            f"Tokenizer '{tokenizer_name_or_path}' has no pad_token_id. "
+            "Use a tokenizer with PAD configured before pretraining."
+        )
+
+    return TokenizerConfig(
+        vocab_size=choose_vocab_size(tokenizer),
+        eos_token_id=int(eos_token_id),
+        pad_token_id=int(pad_token_id),
+        bos_token_id=None if bos_token_id is None else int(bos_token_id),
+        identifier=tokenizer_name_or_path,
+    )
 
 
 @dataclass
@@ -99,119 +153,16 @@ class ExperimentConfig(Config):
     load_trainer_state: bool = False
 
 
-def _load_llama_like_kwargs(config_path: str, default_vocab_size: int) -> tuple[dict[str, Any], dict[str, Any]]:
-    activation_aliases = {
-        "silu": ActivationFunction.silu,
-        "swiglu": ActivationFunction.silu,
-        "gelu_tanh": ActivationFunction.gelu_tanh,
-        "gelu_pytorch_tanh": ActivationFunction.gelu_tanh,
-    }
-
-    def resolve_dtype(value: Any, default: DType = DType.bfloat16) -> DType:
-        if value is None:
-            return default
-        if isinstance(value, DType):
-            return value
-        if isinstance(value, str):
-            normalized = value.removeprefix("torch.")
-            try:
-                return DType(normalized)
-            except ValueError as exc:
-                raise ValueError(f"Unsupported dtype in model config: {value}") from exc
-        raise TypeError(f"Unsupported dtype value in model config: {value!r}")
-
-    def resolve_activation(value: Any) -> ActivationFunction:
-        if value is None:
-            return ActivationFunction.silu
-        if isinstance(value, ActivationFunction):
-            return value
-        if isinstance(value, str) and value in activation_aliases:
-            return activation_aliases[value]
-        raise ValueError(f"Unsupported hidden_act in model config: {value}")
-
-    def build_feed_forward_config(
-        raw_config: dict[str, Any], dtype: DType
-    ) -> Optional[FeedForwardConfig]:
-        feed_forward = raw_config.get("feed_forward")
-        if feed_forward is not None:
-            if not isinstance(feed_forward, dict):
-                raise TypeError("'feed_forward' in model config must be a JSON object")
-
-            ff_kwargs = dict(feed_forward)
-            ff_kwargs["dtype"] = resolve_dtype(ff_kwargs.get("dtype"), default=dtype)
-            ff_kwargs["activation"] = resolve_activation(
-                ff_kwargs.get("activation", raw_config.get("hidden_act"))
-            )
-            if "name" in ff_kwargs:
-                ff_kwargs["name"] = FeedForwardType(ff_kwargs["name"])
-            return FeedForwardConfig(**ff_kwargs)
-
-        intermediate_size = raw_config.get("intermediate_size")
-        if intermediate_size is None:
-            return None
-
-        return FeedForwardConfig(
-            hidden_size=intermediate_size,
-            bias=raw_config.get("mlp_bias", False),
-            dtype=dtype,
-            activation=resolve_activation(raw_config.get("hidden_act")),
-        )
-
-    with open(config_path, "r", encoding="utf-8") as f:
-        raw_config = json.load(f)
-
-    if raw_config.get("attention_bias") not in (None, False):
-        raise ValueError(
-            "This script only supports attention_bias=false because TransformerConfig.llama_like "
-            "builds a bias-free attention module."
-        )
-    if raw_config.get("tie_word_embeddings") not in (None, False):
-        raise ValueError(
-            "This script does not support tie_word_embeddings=true with TransformerConfig.llama_like."
-        )
-
-    model_kwargs: dict[str, Any] = {}
-
-    for key in DIRECT_LLAMA_LIKE_KEYS:
-        value = raw_config.get(key)
-        if value is not None:
-            model_kwargs[key] = value
-
-    for source_key, target_key in HF_TO_LLAMA_LIKE_KEY_MAP.items():
-        if target_key not in model_kwargs and raw_config.get(source_key) is not None:
-            model_kwargs[target_key] = raw_config[source_key]
-
-    model_kwargs["dtype"] = resolve_dtype(model_kwargs.get("dtype"), default=DType.bfloat16)
-    model_kwargs["vocab_size"] = model_kwargs.get("vocab_size", default_vocab_size)
-
-    feed_forward = build_feed_forward_config(raw_config, model_kwargs["dtype"])
-    if feed_forward is not None:
-        model_kwargs["feed_forward"] = feed_forward
-
-    required_keys = ("d_model", "n_layers", "n_heads", "vocab_size")
-    missing_keys = [key for key in required_keys if model_kwargs.get(key) is None]
-    if missing_keys:
-        raise ValueError(
-            f"Missing required model config fields for llama_like(): {', '.join(missing_keys)}"
-        )
-
-    return model_kwargs, raw_config
-
-
 def build_config(args: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
     save_folder = args.save_folder or f"workspace/{args.run_name}"
     work_dir = args.work_dir or str(Path(save_folder) / "dataset-cache")
 
-    tokenizer_config = TokenizerConfig.gpt_neox_olmo_dolma_v1_5()
-    tokenizer_config.identifier = args.tokenizer_name_or_path
+    tokenizer_config = build_tokenizer_config(args.tokenizer_name_or_path)
 
-    model_kwargs, raw_model_config = _load_llama_like_kwargs(
+    model_kwargs, raw_model_config = load_llama_like_kwargs(
         args.model_config,
-        default_vocab_size=tokenizer_config.vocab_size,
+        tokenizer_vocab_size=tokenizer_config.vocab_size,
     )
-
-    if raw_model_config.get("vocab_size") is not None and raw_model_config["vocab_size"] != tokenizer_config.vocab_size:
-        log.warning("Model vocab_size (%s) differs from tokenizer vocab_size (%s); using the value from the JSON config.", raw_model_config["vocab_size"], tokenizer_config.vocab_size)
 
     sequence_length = args.sequence_length or raw_model_config.get("max_sequence_length", 2048)
     model_config = TransformerConfig.llama_like(**model_kwargs)
@@ -325,6 +276,36 @@ def build_config(args: argparse.Namespace, overrides: List[str]) -> ExperimentCo
     ).merge(overrides)
 
 
+def maybe_copy_tokenizer(tokenizer_name_or_path: str, save_folder: str) -> None:
+    source_path = Path(tokenizer_name_or_path).expanduser()
+    destination_dir = Path(save_folder) / "tokenizer"
+    if destination_dir.exists():
+        return
+
+    if source_path.is_dir():
+        tokenizer_json_path = source_path / "tokenizer.json"
+        if tokenizer_json_path.is_file() and not (source_path / "tokenizer_config.json").exists():
+            load_hf_tokenizer(str(source_path)).save_pretrained(str(destination_dir))
+        else:
+            shutil.copytree(source_path, destination_dir)
+        return
+
+    if source_path.is_file():
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        if source_path.suffix == ".json":
+            load_hf_tokenizer(tokenizer_name_or_path).save_pretrained(str(destination_dir))
+        else:
+            shutil.copy2(source_path, destination_dir / source_path.name)
+        return
+
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path, use_fast=True)
+    if isinstance(tokenizer, PreTrainedTokenizerFast) and tokenizer.vocab_file is None:
+        tokenizer.save_pretrained(str(destination_dir))
+    else:
+        tokenizer.save_pretrained(str(destination_dir))
+
+
 def train(config: ExperimentConfig) -> None:
     if get_rank() == 0:
         rich.print(config)
@@ -339,6 +320,12 @@ def train(config: ExperimentConfig) -> None:
 
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
+
+    if get_rank() == 0:
+        maybe_copy_tokenizer(
+            tokenizer_name_or_path=str(config.dataset.tokenizer.identifier),
+            save_folder=trainer.save_folder,
+        )
 
     if not trainer.no_checkpoints and not trainer.maybe_load_checkpoint() and config.load_path:
         log.info("Loading checkpoint from %s", config.load_path)
@@ -370,8 +357,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--eval-interval", type=int, default=200)
     parser.add_argument("--eval-max-batches", type=int, default=-1)
     parser.add_argument("--save-interval", type=int, default=400)
-    parser.add_argument("--wandb-project", type=str, default="residual-bench")
-    parser.add_argument("--wandb-entity", type=str, default="wang-keyu-2002-max-planck-society")
+    parser.add_argument("--wandb-project", type=str, default=None)
+    parser.add_argument("--wandb-entity", type=str, default=None)
     parser.add_argument("--load-path", type=str, default=None)
     parser.add_argument("--load-trainer-state", action="store_true")
     parser.add_argument("--enable-layer-stats", action="store_true")
