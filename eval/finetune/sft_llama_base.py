@@ -284,7 +284,8 @@ def build_config(args: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         ),
         scheduler=LinearWithWarmup(
             warmup_fraction=args.warmup_fraction,
-            alpha_f=0.0,
+            alpha_f=0.1,
+            warmup_min_lr=0.0,
         ),
         max_grad_norm=args.max_grad_norm,
         dp_config=dp_config,
