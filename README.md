@@ -86,6 +86,8 @@ The following 350M-family configs keep `#heads = 16` fixed while varying `d_mode
 | Very deep-350M | 672 | 1792 | 16 | 59 | 42 | 11.39 |
 | Extreme deep-350M | 480 | 1280 | 16 | 120 | 30 | 4.00 |
 
+We follow https://arxiv.org/pdf/2001.08361, excluding embedding parameters when fixing/counting model size. That is, in above table, non-embedding parameters are fixed about 350M, but total parameters can vary from 380M (deepest) to 450M (shallowest).
+
 ## Training Script
 
 Example:
