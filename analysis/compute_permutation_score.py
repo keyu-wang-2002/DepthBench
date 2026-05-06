@@ -1,3 +1,9 @@
+"""
+Pairwise layer weight-swap score: keep the architecture and layer positions fixed,
+swap only the learned weights of two layers, and measure the relative change in next-token loss. 
+Higher scores indicate less interchangeable, more position-specific layer weights.
+"""
+
 import argparse
 import json
 from pathlib import Path
