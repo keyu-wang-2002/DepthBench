@@ -246,8 +246,9 @@ class OLMoNativeLM:
                             {
                                 "cache_key": cache_key,
                                 "input_ids": [self.prefix_token_id],
-                                "labels": [],
+                                "labels": [-100],
                                 "score_start": 0,
+                                "empty_continuation": True
                             }
                         )
                         continue
@@ -318,7 +319,7 @@ class OLMoNativeLM:
                     for row, item in enumerate(batch):
                         seq_len = lengths[row]
                         score_start = score_starts[row]
-                        if seq_len == 0:
+                        if item.get("empty_continuation", False):
                             score = 0.0
                             is_greedy = True
                         else:
