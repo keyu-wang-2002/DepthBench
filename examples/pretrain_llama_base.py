@@ -54,8 +54,8 @@ from olmo_core.utils import seed_all
 
 log = logging.getLogger(__name__)
 
-PRETOKENIZED_DATA_ROOT = "/fast/wangk/data/fineweb-edu/pre-tokenize"
-PROJECT_CODE_ROOT = "/home/wangk/DepthBench"
+PRETOKENIZED_DATA_ROOT = "data/fineweb-edu/pre-tokenize"
+PROJECT_CODE_ROOT = "DepthBench"
 TRAIN_DATA_GLOB = f"{PRETOKENIZED_DATA_ROOT}/train/*.npy"
 EVAL_DATA_GLOB = f"{PRETOKENIZED_DATA_ROOT}/eval/*.npy"
 TOKENIZER_PATH = f"{PROJECT_CODE_ROOT}/pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json"
