@@ -9,6 +9,7 @@ import numpy as np
 import seaborn as sns
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 from tqdm import tqdm
 
@@ -52,8 +53,8 @@ def compute_mean_loss(
 
             micro_input_ids = input_ids[start_idx:end_idx].to(device)
             micro_attention_mask = attention_mask[start_idx:end_idx].to(device)
-            micro_labels = input_ids[start_idx:end_idx].to(device)
-
+            micro_labels = F.pad(micro_input_ids[:, 1:], (0, 1), value=-100)
+            
             with autocast_context(device, model_dtype):
                 outputs = model_forward(
                     model,
@@ -146,7 +147,7 @@ def compute_baseline_forward(
 
             micro_input_ids = input_ids[start_idx:end_idx].to(device)
             micro_attention_mask = attention_mask[start_idx:end_idx].to(device)
-            micro_labels = input_ids[start_idx:end_idx].to(device)
+            micro_labels = F.pad(micro_input_ids[:, 1:], (0, 1), value=-100)
 
             with autocast_context(device, model_dtype):
                 outputs = model_forward(
