@@ -5,7 +5,7 @@
     "attention_bias": false,
     "bos_token_id": null,
     "eos_token_id": 50279,
-    "head_dim": 48,
+    "head_dim": 47,
     "hidden_act": "silu",
     "hidden_size": 752,
     "intermediate_size": 2016,
