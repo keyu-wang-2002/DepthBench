@@ -189,7 +189,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset-split", type=str, default="train")
     parser.add_argument("--output-dir", type=str, required=True)
     parser.add_argument("--tokenizer-name-or-path", type=str, required=True)
-    parser.add_argument("--max-seq-len", type=int, default=2048)
+    parser.add_argument("--max-seq-len", type=int, default=512)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--part-size", type=int, default=1_000_000)
     parser.add_argument("--max-samples", type=int, default=None)
