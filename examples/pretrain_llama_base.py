@@ -19,7 +19,7 @@ for path in (DEPTHBENCH_ROOT, OLMO_CORE_SRC):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from depthbench_utils.model_config import load_llama_like_kwargs
+from config_utils.model_config import load_llama_like_kwargs
 from olmo_core.config import Config, DType
 from olmo_core.data import (
     NumpyDataLoaderConfig,
