@@ -370,7 +370,7 @@ def train(config: ExperimentConfig, dataset_dir: str) -> None:
         if not config.pretrain_checkpoint:
             raise ValueError("No saved SFT checkpoint found and --pretrain-checkpoint was not set.")
         log.info("Loading pretrain checkpoint from %s", config.pretrain_checkpoint)
-        trainer.load_checkpoint(config.pretrain_checkpoint, load_trainer_state=False)
+        trainer.load_checkpoint(config.pretrain_checkpoint, load_trainer_state=False, load_optim_state=False)
     else:
         log.info("Resumed from an existing SFT checkpoint under %s", trainer.save_folder)
 
