@@ -3,7 +3,7 @@ export WANDB_API_KEY="wandb_v1_Mq30zgyGxYs1WKNuBwi7X5aECnL_umcsZPZIroNmnJIS8yolJ
 
 torchrun --nproc_per_node=4 --master_port=35100 --master_addr=localhost "examples/pretrain_llama_base.py" \
     --run_name=pretrain-llama-350M-lr3e-4 \
-    --model-config="configs/llama_350M_backbone.json" \
+    --model-config="configs/llama_350M_attnres.json" \
     --tokenizer-name-or-path="pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
     --seed=42 \
     --max-steps=7600 \

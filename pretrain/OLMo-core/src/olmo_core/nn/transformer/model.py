@@ -68,6 +68,9 @@ if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
     from .layer_stats import LayerStatsCollector
 
+from olmo_core.kernels.attnres import fused_attnres
+
+
 __all__ = [
     "Transformer",
     "NormalizedTransformer",
@@ -160,6 +163,16 @@ class Transformer(nn.Module):
         self.lm_head = lm_head.build(
             d_model=d_model, vocab_size=vocab_size, init_device=init_device
         )
+
+        self._attnres_enabled = any(
+            getattr(b, "attnres_block_size", None) is not None for b in self.blocks.values()
+        )
+        if self._attnres_enabled:
+            from ..layer_norm import LayerNormConfig, LayerNormType
+
+            _ln_cfg = LayerNormConfig(name=LayerNormType.rms, bias=False)
+            self.res_proj = nn.Linear(d_model, 1, bias=False, device=init_device)
+            self.res_norm = _ln_cfg.build(d_model, init_device=init_device)
 
         self.init_device = init_device
         self.init_method = InitMethod(init_method)
@@ -557,6 +570,8 @@ class Transformer(nn.Module):
         if self.embedding_norm is not None:
             h = self.embedding_norm(h)
 
+        attnres_states: Optional[List[torch.Tensor]] = None
+
         # Run each block.
         for block_key, block in self.blocks.items():
             block_idx = int(block_key)
@@ -564,11 +579,27 @@ class Transformer(nn.Module):
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            h = block(h, **all_block_kwargs, **block_kwargs)
+            if self._attnres_enabled:
+                h, attnres_states = block(
+                    h, attnres_states=attnres_states, **all_block_kwargs, **block_kwargs
+                )
+            else:
+                h = block(h, **all_block_kwargs, **block_kwargs)
             if self._layer_stats_collector is not None:
                 h = self._layer_stats_collector.observe_hidden_state(
                     f"block_{block_idx:02d}", h
                 )
+
+        if self._attnres_enabled:
+            residuals = [*attnres_states, h]
+            lm_norm = self.lm_head.norm if self.lm_head is not None else None
+            h = fused_attnres(
+                query=self.res_proj.weight,
+                residuals=residuals,
+                rms_weight=self.res_norm.weight,
+                output_rms_weight=lm_norm.weight if lm_norm is not None else None,
+                rms_eps=self.res_norm.eps,
+            )
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
@@ -580,6 +611,8 @@ class Transformer(nn.Module):
             # will throw an exception.
             if labels is not None:
                 lm_head_kwargs["labels"] = labels
+            if self._attnres_enabled and self.lm_head.norm is not None:
+                lm_head_kwargs["skip_norm"] = True
             return self.lm_head(h, **lm_head_kwargs)
         else:
             return h

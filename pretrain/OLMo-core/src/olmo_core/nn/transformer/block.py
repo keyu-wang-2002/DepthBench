@@ -118,6 +118,7 @@ class TransformerBlock(TransformerBlockBase):
         dropout: float = 0.0,
         attention_residual_alpha: float = 1.0,
         feed_forward_residual_alpha: float = 1.0,
+        attnres_block_size: Optional[int] = None,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
@@ -141,16 +142,75 @@ class TransformerBlock(TransformerBlockBase):
             alpha=feed_forward_residual_alpha, dropout=dropout
         )
 
+        self.attnres_block_size = attnres_block_size
+        if attnres_block_size is not None:
+            from ..layer_norm import LayerNormType
+
+            _rms_cfg = LayerNormConfig(name=LayerNormType.rms, bias=False)
+            if block_idx > 0:
+                self.attn_res_proj = nn.Linear(d_model, 1, bias=False, device=init_device)
+                self.attn_res_norm = _rms_cfg.build(d_model, init_device=init_device)
+                nn.init.zeros_(self.attn_res_proj.weight)
+            self.mlp_res_proj = nn.Linear(d_model, 1, bias=False, device=init_device)
+            self.mlp_res_norm = _rms_cfg.build(d_model, init_device=init_device)
+            self.attnres_is_attn_boundary = (2 * block_idx) % attnres_block_size == 0
+            self.attnres_is_mlp_boundary = (2 * block_idx + 1) % attnres_block_size == 0
+            nn.init.zeros_(self.mlp_res_proj.weight)
+
     def forward(
         self,
         x: torch.Tensor,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        attnres_states: Optional[list] = None,
         **kwargs,
-    ) -> torch.Tensor:
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, list]]:
         del loss_div_factor
-        h = self.attention_residual_stream(x, self.attention(self.attention_norm(x), **kwargs))
-        return self.feed_forward_residual_stream(h, self.feed_forward(self.feed_forward_norm(h)))
+
+        if self.attnres_block_size is not None:
+            from olmo_core.kernels.attnres import fused_attnres
+
+            prefix_sum = x
+            if attnres_states is None:
+                h_normed = self.attention_norm(prefix_sum)
+                attnres_states = [prefix_sum]
+                prefix_sum = None
+            else:
+                residuals = [*attnres_states, prefix_sum]
+                if self.attnres_is_attn_boundary:
+                    attnres_states = residuals
+                    prefix_sum = None
+                h_normed = fused_attnres(
+                    query=self.attn_res_proj.weight,
+                    residuals=residuals,
+                    rms_weight=self.attn_res_norm.weight,
+                    output_rms_weight=self.attention_norm.weight,
+                    rms_eps=self.attn_res_norm.eps,
+                )
+
+            attn_out = self.attention(h_normed, **kwargs)
+            prefix_sum = attn_out if prefix_sum is None else prefix_sum + attn_out
+
+            mlp_residuals = [*attnres_states, prefix_sum]
+            if self.attnres_is_mlp_boundary:
+                attnres_states = mlp_residuals
+                prefix_sum = None
+            h_normed = fused_attnres(
+                query=self.mlp_res_proj.weight,
+                residuals=mlp_residuals,
+                rms_weight=self.mlp_res_norm.weight,
+                output_rms_weight=self.feed_forward_norm.weight,
+                rms_eps=self.mlp_res_norm.eps,
+            )
+
+            mlp_out = self.feed_forward(h_normed)
+            h = mlp_out if prefix_sum is None else prefix_sum + mlp_out
+            return h, attnres_states
+        else:
+            h = self.attention_residual_stream(x, self.attention(self.attention_norm(x), **kwargs))
+            return self.feed_forward_residual_stream(
+                h, self.feed_forward(self.feed_forward_norm(h))
+            )
 
     def apply_tp(
         self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False

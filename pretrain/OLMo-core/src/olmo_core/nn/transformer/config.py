@@ -190,6 +190,12 @@ class TransformerBlockConfig(ModuleConfig):
     """
     A scaling factor applied to the feed-forward (MLP) output before adding it to the residual stream.
     """
+    attnres_block_size: Optional[int] = None
+    """
+    Block size for the attention residual (AttnRes) mechanism. When set, hidden states are
+    accumulated across layers within groups of this size via learned gates, then added back
+    at group boundaries. ``None`` disables AttnRes.
+    """
 
     def __post_init__(self, attention: Optional[AttentionConfig] = None):
         # Handle backwards compatibility: old configs used `attention` instead of `sequence_mixer`.
@@ -1510,6 +1516,8 @@ class TransformerConfig(ModelConfig):
         if feed_forward is None and feed_forward_moe is None:
             feed_forward = FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype)
 
+        attnres_block_size = kwargs.pop("attnres_block_size", None)
+
         # Configure blocks.
         block = TransformerBlockConfig(
             name=block_name,
@@ -1536,6 +1544,7 @@ class TransformerConfig(ModelConfig):
             feed_forward=feed_forward,
             feed_forward_moe=feed_forward_moe,
             layer_norm=layer_norm,
+            attnres_block_size=attnres_block_size,
         )
 
         if block_mods and kwargs.get("block_overrides"):
