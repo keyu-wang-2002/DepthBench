@@ -75,18 +75,18 @@ The following model configs are currently available under: [`./configs`](./confi
 
 The following 350M-family configs keep `#heads = 16` fixed while varying `d_model` and `n_layer` (Aspect Ratio `d_model / n_layer`) to probe depth/width scaling at roughly the same parameter budget. `Standard-350M` is kept as the original backbone anchor, while the other variants use even `head_dim` values that are safe for the current pre-training codepath and satisfy `hidden_size = head_dim * heads` and `intermediate_size = 8/3 * hidden_size` exactly.
 
-| Tier | Layers | Hidden | Intermediate | Heads | head_dim | backbone params | backbone + lm_head params | Aspect Ratio |
+| Tier | Layers | Hidden | Intermediate | Heads | head_dim | non-embedding params | Aspect Ratio |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Very shallow-350M | 8 | 1632 | 4352 | 16 | 102 | 256M | 338M | 204.00 |
-| Shallow-350M | 16 | 1248 | 3328 | 16 | 78 | 299M | 361M | 78.00 |
-| Standard-350M | 24 | 1024 | 2736 | 16 | 64 | 302M | 354M | 42.67 |
-| mid-deep1 | 27 | 960 | 2664 | 16 | 60 | 307M | 355M | 35.56 |
-| mid-deep2 | 31 | 928 | 2334 | 16 | 58 | 308M | 355M | 29.94 |
-| Deeper-350M | 35 | 864 | 2304 | 16 | 54 | 314M | 357M | 24.69 |
-| Deep-350M | 45 | 768 | 2048 | 16 | 48 | 319M | 357M | 17.07 |
-| Very deep-350M | 59 | 672 | 1792 | 16 | 42 | 320M | 354M | 11.39 |
+| Very shallow-350M | 8 | 1632 | 4352 | 16 | 102 |  342M | 204.00 |
+| Shallow-350M | 16 | 1248 | 3328 | 16 | 78 |  361M | 78.00 |
+| Standard-350M | 24 | 1024 | 2736 | 16 | 64 |  354M | 42.67 |
+| mid-deep1 | 27 | 960 | 2664 | 16 | 60 |  355M | 35.56 |
+| mid-deep2 | 31 | 928 | 2334 | 16 | 58 |  355M | 29.94 |
+| Deeper-350M | 35 | 864 | 2304 | 16 | 54 |  357M | 24.69 |
+| Deep-350M | 45 | 768 | 2048 | 16 | 48 |  357M | 17.07 |
+| Very deep-350M | 59 | 672 | 1792 | 16 | 42 |  354M | 11.39 |
 
-We follow https://arxiv.org/pdf/2001.08361 and https://arxiv.org/pdf/2406.19146v3, excluding embedding parameters when fixing model size. 
+We follow https://arxiv.org/pdf/2001.08361 and https://arxiv.org/pdf/2406.19146v3, fix non-emebdding model size (backbone + lm_head) . 
 
 
 
