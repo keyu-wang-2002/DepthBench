@@ -75,24 +75,19 @@ The following model configs are currently available under: [`./configs`](./confi
 
 The following 350M-family configs keep `#heads = 16` fixed while varying `d_model` and `n_layer` (Aspect Ratio `d_model / n_layer`) to probe depth/width scaling at roughly the same parameter budget. `Standard-350M` is kept as the original backbone anchor, while the other variants use even `head_dim` values that are safe for the current pre-training codepath and satisfy `hidden_size = head_dim * heads` and `intermediate_size = 8/3 * hidden_size` exactly.
 
-| Tier | Hidden | Intermediate | Heads | Layers | Head Dim | Aspect Ratio |
-|---|---:|---:|---:|---:|---:|---:|
-| Ultra shallow-350M | 2208 | 5888 | 16 | 4 | 138 | 552.00 |
-| Very shallow-350M | 1632 | 4352 | 16 | 8 | 102 | 204.00 |
-| Shallow-350M | 1248 | 3328 | 16 | 16 | 78 | 78.00 |
-| Standard-350M | 1024 | 2736 | 16 | 24 | 64 | 42.67 |
-| Deeper-350M | 864 | 2304 | 16 | 35 | 54 | 24.69 |
-| Deep-350M | 768 | 2048 | 16 | 45 | 48 | 17.07 |
-| Very deep-350M | 672 | 1792 | 16 | 59 | 42 | 11.39 |
-| Extreme deep-350M | 480 | 1280 | 16 | 120 | 30 | 4.00 |
+| Tier | Layers | Hidden | Intermediate | Heads | head_dim | backbone params | backbone + lm_head params | Aspect Ratio |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Very shallow-350M | 8 | 1632 | 4352 | 16 | 102 | 256M | 338M | 204.00 |
+| Shallow-350M | 16 | 1248 | 3328 | 16 | 78 | 299M | 361M | 78.00 |
+| Standard-350M | 24 | 1024 | 2736 | 16 | 64 | 302M | 354M | 42.67 |
+| mid-deep1 | 27 | 960 | 2664 | 16 | 60 | 307M | 355M | 35.56 |
+| mid-deep2 | 31 | 928 | 2334 | 16 | 58 | 308M | 355M | 29.94 |
+| Deeper-350M | 35 | 864 | 2304 | 16 | 54 | 314M | 357M | 24.69 |
+| Deep-350M | 45 | 768 | 2048 | 16 | 48 | 319M | 357M | 17.07 |
+| Very deep-350M | 59 | 672 | 1792 | 16 | 42 | 320M | 354M | 11.39 |
 
 We follow https://arxiv.org/pdf/2001.08361 and https://arxiv.org/pdf/2406.19146v3, excluding embedding parameters when fixing model size. 
 
-Supplementary
-| Tier  | Layers | Hiddem | Intermediate | Heads |  head_dim | backbone params | backbone + lm_head params |
-|--------------|-------------------|-------------|-------------------|---------------------|---------------------|----------|------------|
-| mid-deep1    | 27                | 960         | 2664              | 16                 | 60       | 307M   | 355M     |
-| mid-deep2    | 31                | 928         | 2334              | 16            | 58       | 308M   | 355M                    |
 
 
 ## Training Script
