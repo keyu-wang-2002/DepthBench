@@ -89,10 +89,10 @@ The following 350M-family configs keep `#heads = 16` fixed while varying `d_mode
 We follow https://arxiv.org/pdf/2001.08361 and https://arxiv.org/pdf/2406.19146v3, excluding embedding parameters when fixing model size. 
 
 Supplementary
-| name  | num_hidden_layers | hidden_size | intermediate_size | num_attention_heads | num_key_value_heads | head_dim | backbone params | backbone + lm_head params |
+| name  | Layers | Hiddem | Intermediate | Heads |  head_dim | backbone params | backbone + lm_head params |
 |-------|-------------------|-------------|-------------------|---------------------|---------------------|----------|-----------------|--------------|
-| mid-deep1 | 27                | 896         | 2386              | 16                  | 16                  | 56       | 304.97M         | 350.02M      |
-| mid-deep2 | 31                | 832         | 2248              | 16                  | 16                  | 52       | 301.66M         | 343.50M      |
+| mid-deep1 | 27                | 896         | 2386              | 16                  |  56       | 304.97M         | 350.02M      |
+| mid-deep2 | 31                | 832         | 2248              | 16                  |  52       | 301.66M         | 343.50M      |
 
 ## Training Script
 
