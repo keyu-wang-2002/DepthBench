@@ -78,7 +78,7 @@ The following 350M-family configs keep `#heads = 16` fixed while varying `d_mode
 | Tier | Layers | Hidden | Intermediate | Heads | head_dim | params | Aspect Ratio |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Very shallow-350M | 8 | 1664 | 4576 | 16 | 104 | 355M | 208.00 |
-| Shallow-350M | 16 | 1248 | 3328 | 16 | 78 |  361M | 78.00 |
+| Shallow-350M | 16 | 1248 | 3328 | 16 | 78 |  359M | 78.00 |
 | Standard-350M | 24 | 1024 | 2736 | 16 | 64 |  354M | 42.67 |
 | mid-deep1 | 27 | 960 | 2664 | 16 | 60 |  355M | 35.56 |
 | mid-deep2 | 31 | 928 | 2334 | 16 | 58 |  355M | 29.94 |
