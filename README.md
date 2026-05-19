@@ -91,8 +91,8 @@ We follow https://arxiv.org/pdf/2001.08361 and https://arxiv.org/pdf/2406.19146v
 Supplementary
 | Tier  | Layers | Hiddem | Intermediate | Heads |  head_dim | backbone params | backbone + lm_head params |
 |--------------|-------------------|-------------|-------------------|---------------------|---------------------|----------|------------|
-| mid-deep1    | 27                | 960         | 2664              | 16                 | 60       | 306.738M   | 355.007M     |
-| mid-deep2    | 31                | 928         | 2334              | 16            | 58       | 308.279M   | 354.939M                    |
+| mid-deep1    | 27                | 960         | 2664              | 16                 | 60       | 307M   | 355M     |
+| mid-deep2    | 31                | 928         | 2334              | 16            | 58       | 308M   | 355M                    |
 
 
 ## Training Script
