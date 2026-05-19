@@ -76,7 +76,7 @@ The following model configs are currently available under: [`./configs`](./confi
 The following 350M-family configs keep `#heads = 16` fixed while varying `d_model` and `n_layer` (Aspect Ratio `d_model / n_layer`) to probe depth/width scaling at roughly the same parameter budget. `Standard-350M` is kept as the original backbone anchor, while the other variants use even `head_dim` values that are safe for the current pre-training codepath and satisfy `hidden_size = head_dim * heads` and `intermediate_size = 8/3 * hidden_size` exactly.
 
 | Tier | Layers | Hidden | Intermediate | Heads | head_dim | non-embedding params | Aspect Ratio |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
+|---|---:|---:|---:|---:|---:|---:|---:|
 | Very shallow-350M | 8 | 1632 | 4352 | 16 | 102 |  342M | 204.00 |
 | Shallow-350M | 16 | 1248 | 3328 | 16 | 78 |  361M | 78.00 |
 | Standard-350M | 24 | 1024 | 2736 | 16 | 64 |  354M | 42.67 |
