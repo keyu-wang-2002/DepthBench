@@ -75,17 +75,17 @@ The following model configs are currently available under: [`./configs`](./confi
 
 The following 350M-family configs keep `#heads = 16` fixed while varying `d_model` and `n_layer` (Aspect Ratio `d_model / n_layer`) to probe depth/width scaling at roughly the same parameter budget. `Standard-350M` is kept as the original backbone anchor (ref https://arxiv.org/pdf/2401.02954 etc.), while the other variants use even `head_dim` values that are safe for the current pre-training codepath and satisfy `hidden_size = head_dim * heads` and `intermediate_size = 8/3 * hidden_size` exactly.
 
-| Tier | Layers | Hidden | Intermediate | Heads | head_dim | params | Aspect Ratio |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Very shallow-350M | 8 | 1664 | 4576 | 16 | 104 | 355M | 208.00 |
-| Shallow-350M | 16 | 1248 | 3328 | 16 | 78 |  359M | 78.00 |
-| mid-shallow-350M | 20 | 1120 | 2988 | 16 | 70 |  357M | 56.00 |
-| Standard-350M | 24 | 1024 | 2736 | 16 | 64 |  354M | 42.67 |
-| mid-deep1-350M | 27 | 960 | 2664 | 16 | 60 |  355M | 35.56 |
-| mid-deep2-350M | 31 | 928 | 2334 | 16 | 58 |  355M | 29.94 |
-| Deeper-350M | 35 | 864 | 2304 | 16 | 54 |  357M | 24.69 |
-| Deep-350M | 45 | 768 | 2048 | 16 | 48 |  357M | 17.07 |
-| Very deep-350M | 59 | 672 | 1792 | 16 | 42 |  354M | 11.39 |
+| Tier | Layers | Hidden | Intermediate | Heads | head_dim |  Aspect Ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| Very shallow-350M | 8 | 1664 | 4576 | 16 | 104 |  208.00 |
+| Shallow-350M | 16 | 1248 | 3328 | 16 | 78 |   78.00 |
+| mid-shallow-350M | 20 | 1120 | 2988 | 16 | 70 |   56.00 |
+| Standard-350M | 24 | 1024 | 2736 | 16 | 64 |   42.67 |
+| mid-deep1-350M | 27 | 960 | 2664 | 16 | 60 |   35.56 |
+| mid-deep2-350M | 31 | 928 | 2334 | 16 | 58 |   29.94 |
+| Deeper-350M | 35 | 864 | 2304 | 16 | 54 |   24.69 |
+| Deep-350M | 45 | 768 | 2048 | 16 | 48 |   17.07 |
+| Very deep-350M | 59 | 672 | 1792 | 16 | 42 |   11.39 |
 
 We follow https://arxiv.org/pdf/2001.08361 and https://arxiv.org/pdf/2406.19146v3, fix non-emebdding model size (backbone + lm_head) . 
 
