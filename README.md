@@ -87,7 +87,7 @@ The following 350M-family configs keep `#heads = 16` fixed while varying `d_mode
 | Deep-350M | 45 | 768 | 2048 | 16 | 48 |   17.07 |
 | Very deep-350M | 59 | 672 | 1792 | 16 | 42 |   11.39 |
 
-We follow https://arxiv.org/pdf/2406.19146v3, fix non-emebdding model size (backbone + lm_head) . 
+We follow the original Kaplan scaling laws' motivation for excluding embeddings when sweeping aspect ratios, but adopt the setting from https://arxiv.org/pdf/2406.19146v3 for modern untied embeddings and LM heads: fix the non-embedding model size (backbone + LM head).
 
 
 
