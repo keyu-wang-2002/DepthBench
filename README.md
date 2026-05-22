@@ -73,21 +73,15 @@ The following model configs are currently available under: [`./configs`](./confi
 
 ### 350M Aspect-Ratio Variants
 
-The following 350M-family configs keep `#heads = 16` fixed while varying `d_model` and `n_layer` (Aspect Ratio `d_model / n_layer`) to probe depth/width scaling at roughly the same parameter budget. `Standard-350M` is kept as the original backbone anchor (ref https://arxiv.org/pdf/2401.02954 etc.), while the other variants use even `head_dim` values that are safe for the current pre-training codepath and satisfy `hidden_size = head_dim * heads` and `intermediate_size = 8/3 * hidden_size` exactly.
-
-| Tier | Layers | Hidden | Intermediate | Heads | head_dim |  Aspect Ratio |
-|---|---:|---:|---:|---:|---:|---:|
-| Very shallow-350M | 8 | 1664 | 4576 | 16 | 104 |  208.00 |
-| Shallow-350M | 16 | 1248 | 3328 | 16 | 78 |   78.00 |
-| mid-shallow-350M | 20 | 1120 | 2988 | 16 | 70 |   56.00 |
-| Standard-350M | 24 | 1024 | 2736 | 16 | 64 |   42.67 |
-| mid-deep1-350M | 27 | 960 | 2664 | 16 | 60 |   35.56 |
-| mid-deep2-350M | 31 | 928 | 2334 | 16 | 58 |   29.94 |
-| Deeper-350M | 35 | 864 | 2304 | 16 | 54 |   24.69 |
-| Deep-350M | 45 | 768 | 2048 | 16 | 48 |   17.07 |
-| Very deep-350M | 59 | 672 | 1792 | 16 | 42 |   11.39 |
-
-We follow the original Kaplan scaling laws' motivation for excluding embeddings when sweeping aspect ratios, but adopt the setting from https://arxiv.org/pdf/2406.19146v3 for modern untied embeddings and LM heads: fix the non-embedding model size (backbone + LM head).
+| Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Backbone Diff | Total Size | Total Diff |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 1216 | 3248 | 16 | 76 | 76.00 | 284M | -6.01% | 407M | +0.28% |
+| 20 | 1120 | 2992 | 16 | 70 | 56.00 | 301M | -0.32% | 414M | +2.14% |
+| 24 | 1024 | 2736 | 16 | 64 | 42.67 | 302M | 0.00% | 405M | 0.00% |
+| 26 | 992 | 2656 | 16 | 62 | 38.15 | 308M | +1.81% | 408M | +0.56% |
+| 28 | 960 | 2560 | 16 | 60 | 34.29 | 310M | +2.41% | 406M | +0.21% |
+| 30 | 928 | 2480 | 16 | 58 | 30.93 | 311M | +2.68% | 404M | -0.38% |
+| 32 | 896 | 2400 | 16 | 56 | 28.00 | 309M | +2.26% | 399M | -1.49% |
 
 
 
