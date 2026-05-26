@@ -23,11 +23,11 @@ torchrun \
     --train-data-glob="${TRAIN_DATA_GLOB:-${REPO_ROOT}/data/fineweb-edu/pre-tokenize/train/*.npy}" \
     --eval-data-glob="${EVAL_DATA_GLOB:-${REPO_ROOT}/data/fineweb-edu/pre-tokenize/eval/*.npy}" \
     --seed="${SEED:-42}" \
-    --max-steps="${MAX_STEPS:-7000}" \
+    --max-steps="${MAX_STEPS:-7600}" \
     --global-train-batch-size="${GLOBAL_TRAIN_BATCH_SIZE:-512}" \
-    --device-train-microbatch-size="${DEVICE_TRAIN_MICROBATCH_SIZE:-16}" \
+    --device-train-microbatch-size="${DEVICE_TRAIN_MICROBATCH_SIZE:-4}" \
     --learning-rate="${LEARNING_RATE:-3e-4}" \
-    --warmup-steps="${WARMUP_STEPS:-700}" \
+    --warmup-steps="${WARMUP_STEPS:-760}" \
     --eval-interval="${EVAL_INTERVAL:-200}" \
     --save-interval="${SAVE_INTERVAL:-3000}" \
     --save-folder="${SAVE_FOLDER:-${REPO_ROOT}/ckpt/depthbench/pretrain-llama-350M-mhc-s4-lr3e-4}" \

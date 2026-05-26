@@ -12,7 +12,7 @@ python -m pip install --upgrade pip setuptools wheel
 python -m pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu118
 
 cd DepthBench/pretrain/OLMo-core
-python -m pip install -e ".[wandb,transformers]"
+python -m pip install -e ".[wandb,swanlab,transformers]"
 python -m pip install datasets pyarrow
 pip install torch transformers numpy tqdm matplotlib seaborn
 ```
@@ -79,11 +79,25 @@ Example:
 
 ```bash
 cd ./examples
+bash pretrain_llama_60M_base.sh
+bash pretrain_llama_60M_hc.sh
+bash pretrain_llama_60M_mhc.sh
 bash pretrain_llama_130M_base.sh
+bash pretrain_llama_130M_hc.sh
+bash pretrain_llama_130M_mhc.sh
 bash pretrain_llama_250M_base.sh
+bash pretrain_llama_250M_hc.sh
+bash pretrain_llama_250M_mhc.sh
 bash pretrain_llama_350M_base.sh
+bash pretrain_llama_350M_hc.sh
+bash pretrain_llama_350M_mhc.sh
 bash pretrain_llama_1B_base.sh
+bash pretrain_llama_1B_hc.sh
+bash pretrain_llama_1B_mhc.sh
 ```
+
+HC / mHC experiment notes and paper-aligned settings are documented in
+[`docs/hc_mhc_experiment_plan.md`](./docs/hc_mhc_experiment_plan.md).
 
 Note: DepthBench now supports per-layer monitoring of hidden-state statistics during pretraining. For each transformer block, we record statistics for:
 
@@ -113,14 +127,31 @@ train/layer_stats/block_00/backward/mean
 ...
 ```
 
-These metrics are automatically logged to W&B when W&B is enabled. W&B may create many charts because every block and every statistic is logged separately. A convenient way to view them is to create multi-metric panels with regex, for example:
+These metrics are automatically logged to W&B or SwanLab when the corresponding logger is enabled. W&B/SwanLab may create many charts because every block and every statistic is logged separately. A convenient way to view them is to create multi-metric panels with regex, for example:
 
 ```text
 ^train/layer_stats/block_\d+/forward/norm$
 ^train/layer_stats/block_\d+/backward/norm$
 ```
 
-Add swanlab: TODO
+Enable SwanLab logging with:
+
+```bash
+python examples/pretrain_llama_base.py \
+  --swanlab-project depthbench \
+  --swanlab-workspace your-workspace \
+  --swanlab-mode cloud
+```
+
+Cloud mode requires `swanlab login` or `SWANLAB_API_KEY`.
+
+If you prefer local-only logging:
+
+```bash
+python examples/pretrain_llama_base.py \
+  --swanlab-project depthbench \
+  --swanlab-mode local
+```
 
 
 ## Analysis

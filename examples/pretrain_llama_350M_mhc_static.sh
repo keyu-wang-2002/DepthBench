@@ -8,17 +8,9 @@ if [[ -f "${REPO_ROOT}/scripts/load_local_env.sh" ]]; then
     source "${REPO_ROOT}/scripts/load_local_env.sh"
 fi
 
-if [[ -f "${REPO_ROOT}/.venv/bin/activate" ]]; then
-    source "${REPO_ROOT}/.venv/bin/activate"
-fi
-
-torchrun \
-    --nproc_per_node="${NPROC_PER_NODE:-8}" \
-    --master_port="${MASTER_PORT:-35100}" \
-    --master_addr="${MASTER_ADDR:-localhost}" \
-    "${SCRIPT_DIR}/pretrain_llama_base.py" \
-    --run_name="${RUN_NAME:-pretrain-llama-350M-hc-s4-lr3e-4}" \
-    --model-config="${MODEL_CONFIG:-${REPO_ROOT}/configs/llama_350M_hc.json}" \
+python "${SCRIPT_DIR}/pretrain_llama_base.py" \
+    --run_name="${RUN_NAME:-pretrain-llama-350M-mhc-static-s4-lr3e-4}" \
+    --model-config="${MODEL_CONFIG:-${REPO_ROOT}/configs/llama_350M_mhc_static.json}" \
     --tokenizer-name-or-path="${TOKENIZER_PATH:-${REPO_ROOT}/pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json}" \
     --train-data-glob="${TRAIN_DATA_GLOB:-${REPO_ROOT}/data/fineweb-edu/pre-tokenize/train/*.npy}" \
     --eval-data-glob="${EVAL_DATA_GLOB:-${REPO_ROOT}/data/fineweb-edu/pre-tokenize/eval/*.npy}" \
@@ -30,15 +22,14 @@ torchrun \
     --warmup-steps="${WARMUP_STEPS:-760}" \
     --eval-interval="${EVAL_INTERVAL:-200}" \
     --save-interval="${SAVE_INTERVAL:-3000}" \
-    --save-folder="${SAVE_FOLDER:-${REPO_ROOT}/ckpt/depthbench/pretrain-llama-350M-hc-s4-lr3e-4}" \
+    --save-folder="${SAVE_FOLDER:-${REPO_ROOT}/ckpt/depthbench/pretrain-llama-350M-mhc-static-s4-lr3e-4}" \
     --wandb-project="${WANDB_PROJECT:-}" \
     --wandb-entity="${WANDB_ENTITY:-}" \
     --swanlab-project="${SWANLAB_PROJECT:-}" \
     --swanlab-workspace="${SWANLAB_WORKSPACE:-}" \
-    --swanlab-group="${SWANLAB_GROUP:-}" \
-    --swanlab-description="${SWANLAB_DESCRIPTION:-}" \
+    --swanlab-group="${SWANLAB_GROUP:-mhc_static}" \
+    --swanlab-description="${SWANLAB_DESCRIPTION:-DepthBench 350M official-style static mHC}" \
     --swanlab-mode="${SWANLAB_MODE:-}" \
-    --swanlab-tags ${SWANLAB_TAGS:-} \
+    --swanlab-tags ${SWANLAB_TAGS:-350M mhc_static official-style s4 fineweb-edu-100bt} \
     --enable-layer-stats \
-    --layer-stats-interval "${LAYER_STATS_INTERVAL:-1}" \
-    "$@"
+    --layer-stats-interval "${LAYER_STATS_INTERVAL:-1}"

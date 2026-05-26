@@ -153,6 +153,7 @@ class HyperConnectionsKind(StrEnum):
 
     hc = "hc"
     mhc = "mhc"
+    mhc_static = "mhc_static"
 
 
 @dataclass
@@ -166,6 +167,7 @@ class HyperConnectionsConfig(Config):
     tanh: bool = True
     gating_factor_init: float = 0.01
     sinkhorn_iters: int = 20
+    sinkhorn_tau: float = 1.0
     disable_static_weight_decay: bool = True
     scale_output_init_by_sqrt_n: bool = True
 
@@ -193,6 +195,7 @@ class HyperConnectionsConfig(Config):
             tanh=self.tanh,
             gating_factor_init=self.gating_factor_init,
             sinkhorn_iters=self.sinkhorn_iters,
+            sinkhorn_tau=self.sinkhorn_tau,
             init_device=init_device,
             dtype=dtype,
         )
@@ -201,6 +204,8 @@ class HyperConnectionsConfig(Config):
         n = self.num_residual_streams
         if self.kind == HyperConnectionsKind.hc:
             return (n * (n + 1)) + (d_model * (n + 1)) + 1 + n + d_model + 1
+        if self.kind == HyperConnectionsKind.mhc_static:
+            return (n * n) + n + n
 
         flat_dim = d_model * n
         return (flat_dim * n) + (flat_dim * n) + (flat_dim * n * n) + 3 + n + n + (n * n)
@@ -208,6 +213,8 @@ class HyperConnectionsConfig(Config):
     def static_parameter_patterns(self, module_pattern: str) -> list[str]:
         if self.kind == HyperConnectionsKind.hc:
             names = ("static_alpha", "static_beta")
+        elif self.kind == HyperConnectionsKind.mhc_static:
+            names = ("H_res_logits", "H_pre_logits", "H_post_logits")
         else:
             names = ("pre_bias", "post_bias", "residual_bias")
         return [f"{module_pattern}.{name}" for name in names]

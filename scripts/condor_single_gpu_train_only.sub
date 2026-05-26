@@ -1,0 +1,12 @@
+universe = vanilla
+initialdir = /fast/wliu/yy/DepthBench_workspace/DepthBench
+executable = /bin/bash
+arguments = /fast/wliu/yy/DepthBench_workspace/DepthBench/scripts/run_single_gpu_train_only.sh
+request_cpus = 4
+request_memory = 64000
+request_gpus = 1
+requirements = (TARGET.CUDACapability >= 8.0) && (TARGET.CUDAGlobalMemoryMb >= 40000)
+output = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_single_gpu_train_only.$(ClusterId).$(ProcId).out
+error = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_single_gpu_train_only.$(ClusterId).$(ProcId).err
+log = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_single_gpu_train_only.$(ClusterId).$(ProcId).log
+queue

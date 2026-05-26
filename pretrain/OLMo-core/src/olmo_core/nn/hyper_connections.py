@@ -17,12 +17,12 @@ def _rms_norm(x: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + eps)
 
 
-def sinkhorn_log(logits: torch.Tensor, num_iters: int = 20) -> torch.Tensor:
+def sinkhorn_log(logits: torch.Tensor, num_iters: int = 20, tau: float = 1.0) -> torch.Tensor:
     """
     Project logits onto the Birkhoff polytope with log-domain Sinkhorn iterations.
     """
     n = logits.shape[-1]
-    z = logits.float()
+    z = logits.float() / tau
     log_marginal = -math.log(n)
 
     u = torch.zeros_like(z[..., 0])
@@ -105,6 +105,7 @@ class HyperConnection(nn.Module):
         tanh: bool = True,
         gating_factor_init: float = 0.01,
         sinkhorn_iters: int = 20,
+        sinkhorn_tau: float = 1.0,
         init_device: str = "cpu",
         dtype: torch.dtype = torch.float32,
     ):
@@ -112,7 +113,7 @@ class HyperConnection(nn.Module):
 
         if num_residual_streams < 1:
             raise ValueError("'num_residual_streams' must be >= 1")
-        if kind not in {"hc", "mhc"}:
+        if kind not in {"hc", "mhc", "mhc_static"}:
             raise ValueError(f"Unsupported hyper-connection kind: {kind}")
 
         self.kind = kind
@@ -120,6 +121,7 @@ class HyperConnection(nn.Module):
         self.num_residual_streams = num_residual_streams
         self.dim = dim
         self.sinkhorn_iters = sinkhorn_iters
+        self.sinkhorn_tau = sinkhorn_tau
         self.selected_stream = (layer_index or 0) % num_residual_streams
         self.gating_factor_init = gating_factor_init
         self.bias_mag = 8.0
@@ -153,7 +155,7 @@ class HyperConnection(nn.Module):
             self.dynamic_beta_scale = nn.Parameter(
                 torch.tensor(gating_factor_init, device=init_device, dtype=dtype)
             )
-        else:
+        elif kind == "mhc":
             flat_dim = dim * num_residual_streams
 
             pre_bias = torch.full((num_residual_streams,), -self.bias_mag, device=init_device, dtype=dtype)
@@ -196,6 +198,24 @@ class HyperConnection(nn.Module):
             self.residual_gate = nn.Parameter(
                 torch.tensor(gating_factor_init, device=init_device, dtype=dtype)
             )
+        else:
+            h_res_logits = torch.full(
+                (num_residual_streams, num_residual_streams),
+                -self.bias_mag,
+                device=init_device,
+                dtype=dtype,
+            )
+            h_res_logits.fill_diagonal_(0.0)
+            self.H_res_logits = nn.Parameter(h_res_logits)
+
+            h_pre_logits = torch.full(
+                (num_residual_streams,), -self.bias_mag, device=init_device, dtype=dtype
+            )
+            h_pre_logits[self.selected_stream] = 0.0
+            self.H_pre_logits = nn.Parameter(h_pre_logits)
+            self.H_post_logits = nn.Parameter(
+                torch.zeros(num_residual_streams, device=init_device, dtype=dtype)
+            )
 
         self.reset_parameters()
 
@@ -214,6 +234,14 @@ class HyperConnection(nn.Module):
             self.static_beta.fill_(1.0)
             self.dynamic_beta_proj.zero_()
             self.dynamic_beta_scale.fill_(self.gating_factor_init)
+            return
+
+        if self.kind == "mhc_static":
+            self.H_res_logits.fill_(-self.bias_mag)
+            self.H_res_logits.fill_diagonal_(0.0)
+            self.H_pre_logits.fill_(-self.bias_mag)
+            self.H_pre_logits[self.selected_stream] = 0.0
+            self.H_post_logits.zero_()
             return
 
         self.pre_bias.fill_(-self.bias_mag)
@@ -285,7 +313,35 @@ class HyperConnection(nn.Module):
 
         return tree_unflatten((output, *rest), tree_spec)
 
+    def _forward_mhc_static(self, residuals: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
+        streams = _reshape_to_streams(residuals, self.num_residual_streams)
+
+        h_res = sinkhorn_log(
+            self.H_res_logits,
+            num_iters=self.sinkhorn_iters,
+            tau=self.sinkhorn_tau,
+        ).to(dtype=streams.dtype)
+        h_pre = torch.softmax(self.H_pre_logits.float(), dim=-1).to(dtype=streams.dtype)
+        h_post = torch.softmax(self.H_post_logits.float(), dim=-1).to(dtype=streams.dtype)
+
+        mixed_residuals = torch.einsum("st,...sd->...td", h_res, streams)
+        branch_input = torch.einsum("s,...sd->...d", h_pre, streams)
+
+        branch_output = self.branch(branch_input, *args, **kwargs) if self.branch is not None else branch_input
+        (branch_output, *rest), tree_spec = tree_flatten(branch_output)
+
+        branch_to_streams = branch_output.unsqueeze(-2) * h_post.to(dtype=branch_output.dtype).view(
+            *((1,) * (branch_output.ndim - 1)),
+            self.num_residual_streams,
+            1,
+        )
+        output = self.dropout(_flatten_from_streams(mixed_residuals + branch_to_streams))
+
+        return tree_unflatten((output, *rest), tree_spec)
+
     def forward(self, residuals: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
         if self.kind == "hc":
             return self._forward_hc(residuals, *args, **kwargs)
+        if self.kind == "mhc_static":
+            return self._forward_mhc_static(residuals, *args, **kwargs)
         return self._forward_mhc(residuals, *args, **kwargs)

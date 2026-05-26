@@ -1,0 +1,10 @@
+universe = vanilla
+initialdir = /fast/wliu/yy/DepthBench_workspace/DepthBench
+executable = /bin/bash
+arguments = /fast/wliu/yy/DepthBench_workspace/DepthBench/scripts/run_full_tokenization.sh
+request_cpus = 4
+request_memory = 32000
+output = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_full_tokenization.$(ClusterId).$(ProcId).out
+error = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_full_tokenization.$(ClusterId).$(ProcId).err
+log = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_full_tokenization.$(ClusterId).$(ProcId).log
+queue

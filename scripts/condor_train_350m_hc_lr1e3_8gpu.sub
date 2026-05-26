@@ -1,0 +1,13 @@
+universe = vanilla
+initialdir = /fast/wliu/yy/DepthBench_workspace/DepthBench
+executable = /bin/bash
+arguments = /fast/wliu/yy/DepthBench_workspace/DepthBench/scripts/run_hc_350m_8gpu.sh
+request_cpus = 32
+request_memory = 128000
+request_gpus = 8
+requirements = (TARGET.CUDAGlobalMemoryMb >= 80000) && (TARGET.CUDACapability >= 8.0) && regexp("H100", TARGET.CUDADeviceName)
+environment = "LEARNING_RATE=1e-3 RUN_NAME=pretrain-llama-350M-hc-s4-lr1e-3 SAVE_FOLDER=/fast/wliu/yy/DepthBench_workspace/DepthBench/ckpt/depthbench/pretrain-llama-350M-hc-s4-lr1e-3"
+output = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_train_350m_hc_lr1e3_8gpu.$(ClusterId).$(ProcId).out
+error = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_train_350m_hc_lr1e3_8gpu.$(ClusterId).$(ProcId).err
+log = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_train_350m_hc_lr1e3_8gpu.$(ClusterId).$(ProcId).log
+queue

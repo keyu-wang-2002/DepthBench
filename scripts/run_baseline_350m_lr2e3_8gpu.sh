@@ -12,12 +12,40 @@ if [[ -f "${REPO_ROOT}/.venv/bin/activate" ]]; then
     source "${REPO_ROOT}/.venv/bin/activate"
 fi
 
+export NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
+export RUN_NAME="${RUN_NAME:-pretrain-llama-350M-lr2e-3}"
+export SAVE_FOLDER="${SAVE_FOLDER:-${REPO_ROOT}/ckpt/depthbench/pretrain-llama-350M-lr2e-3}"
+export SWANLAB_GROUP="${SWANLAB_GROUP:-baseline}"
+export SWANLAB_DESCRIPTION="${SWANLAB_DESCRIPTION:-DepthBench 350M baseline with lr=2e-3 on full FineWeb-Edu 100BT pre-tokenized data}"
+export SWANLAB_TAGS="${SWANLAB_TAGS:-350M baseline 8gpu lr2e-3 fineweb-edu-100bt}"
+
+echo "Starting 350M baseline training (lr=2e-3)"
+echo "REPO_ROOT=${REPO_ROOT}"
+echo "RUN_NAME=${RUN_NAME}"
+echo "SAVE_FOLDER=${SAVE_FOLDER}"
+echo "SWANLAB_PROJECT=${SWANLAB_PROJECT:-}"
+echo "SWANLAB_WORKSPACE=${SWANLAB_WORKSPACE:-}"
+echo "SWANLAB_GROUP=${SWANLAB_GROUP:-}"
+echo "NPROC_PER_NODE=${NPROC_PER_NODE}"
+
+python - <<'PY'
+import os
+import torch
+
+print("CUDA available:", torch.cuda.is_available())
+print("CUDA device count:", torch.cuda.device_count())
+for idx in range(torch.cuda.device_count()):
+    print(f"GPU {idx}: {torch.cuda.get_device_name(idx)}")
+print("SWANLAB enabled:", bool(os.environ.get("SWANLAB_PROJECT")))
+PY
+
+cd "${REPO_ROOT}/examples"
 torchrun \
-    --nproc_per_node="${NPROC_PER_NODE:-8}" \
+    --nproc_per_node="${NPROC_PER_NODE}" \
     --master_port="${MASTER_PORT:-35100}" \
     --master_addr="${MASTER_ADDR:-localhost}" \
-    "${SCRIPT_DIR}/pretrain_llama_base.py" \
-    --run_name="${RUN_NAME:-pretrain-llama-350M-lr3e-4}" \
+    "${REPO_ROOT}/examples/pretrain_llama_base.py" \
+    --run_name="${RUN_NAME}" \
     --model-config="${MODEL_CONFIG:-${REPO_ROOT}/configs/llama_350M_backbone.json}" \
     --tokenizer-name-or-path="${TOKENIZER_PATH:-${REPO_ROOT}/pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json}" \
     --train-data-glob="${TRAIN_DATA_GLOB:-${REPO_ROOT}/data/fineweb-edu/pre-tokenize/train/*.npy}" \
@@ -26,11 +54,11 @@ torchrun \
     --max-steps="${MAX_STEPS:-7600}" \
     --global-train-batch-size="${GLOBAL_TRAIN_BATCH_SIZE:-512}" \
     --device-train-microbatch-size="${DEVICE_TRAIN_MICROBATCH_SIZE:-16}" \
-    --learning-rate="${LEARNING_RATE:-3e-4}" \
+    --learning-rate="${LEARNING_RATE:-2e-3}" \
     --warmup-steps="${WARMUP_STEPS:-760}" \
     --eval-interval="${EVAL_INTERVAL:-200}" \
     --save-interval="${SAVE_INTERVAL:-3000}" \
-    --save-folder="${SAVE_FOLDER:-${REPO_ROOT}/ckpt/depthbench/pretrain-llama-350M-lr3e-4}" \
+    --save-folder="${SAVE_FOLDER}" \
     --wandb-project="${WANDB_PROJECT:-}" \
     --wandb-entity="${WANDB_ENTITY:-}" \
     --swanlab-project="${SWANLAB_PROJECT:-}" \
@@ -40,5 +68,4 @@ torchrun \
     --swanlab-mode="${SWANLAB_MODE:-}" \
     --swanlab-tags ${SWANLAB_TAGS:-} \
     --enable-layer-stats \
-    --layer-stats-interval "${LAYER_STATS_INTERVAL:-1}" \
-    "$@"
+    --layer-stats-interval "${LAYER_STATS_INTERVAL:-1}"

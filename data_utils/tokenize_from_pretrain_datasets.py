@@ -21,10 +21,19 @@ from olmo_core.data import TokenizerConfig
 log = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_TRAIN_PARQUET_GLOB = "data/fineweb-edu/100BT/*.parquet"
-DEFAULT_EVAL_PARQUET_PATH = "data/fineweb-edu/eval/eval_013_00008.parquet"
-DEFAULT_OUTPUT_DIR = "data/fineweb-edu/pre-tokenize"
-DEFAULT_TOKENIZER_PATH = "DepthBench/pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json"
+DEFAULT_TRAIN_PARQUET_GLOB = str(REPO_ROOT / "data" / "fineweb-edu" / "100BT" / "*.parquet")
+DEFAULT_EVAL_PARQUET_PATH = str(REPO_ROOT / "data" / "fineweb-edu" / "eval" / "eval_013_00008.parquet")
+DEFAULT_OUTPUT_DIR = str(REPO_ROOT / "data" / "fineweb-edu" / "pre-tokenize")
+DEFAULT_TOKENIZER_PATH = str(
+    REPO_ROOT
+    / "pretrain"
+    / "OLMo-core"
+    / "src"
+    / "olmo_core"
+    / "data"
+    / "tokenizers"
+    / "allenai_gpt-neox-olmo-dolma-v1_5.json"
+)
 
 
 @dataclass
@@ -60,6 +69,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pad-token-id", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=4096)
     parser.add_argument("--limit-train-files", type=int, default=None)
+    parser.add_argument("--max-documents-per-file", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--skip-train", action="store_true")
@@ -243,6 +253,7 @@ def tokenize_parquet_to_memmap(
     overwrite: bool,
     skip_existing: bool,
     progress_log_interval_docs: int,
+    max_documents_per_file: Optional[int],
     worker_label: str,
 ) -> ShardStats:
     meta_path = shard_meta_path(output_npy_path)
@@ -296,6 +307,7 @@ def tokenize_parquet_to_memmap(
             gzip.open(tmp_doc_indices_path, "wt", compresslevel=6) if write_doc_indices else None
         )
         try:
+            reached_limit = False
             for text_batch in iter_parquet_text_batches(
                 parquet_path,
                 text_field=text_field,
@@ -323,6 +335,10 @@ def tokenize_parquet_to_memmap(
                     num_tokens += len(normalized)
                     docs_since_log += 1
 
+                    if max_documents_per_file is not None and num_documents >= max_documents_per_file:
+                        reached_limit = True
+                        break
+
                 progress.update(len(encoded))
                 progress.set_postfix(tokens=f"{num_tokens:,}")
                 now = time.monotonic()
@@ -340,6 +356,8 @@ def tokenize_parquet_to_memmap(
                     )
                     docs_since_log = 0
                     last_log_time = now
+                if reached_limit:
+                    break
         finally:
             if doc_index_fh is not None:
                 doc_index_fh.close()
@@ -476,6 +494,7 @@ def main() -> None:
                 overwrite=args.overwrite,
                 skip_existing=args.skip_existing,
                 progress_log_interval_docs=args.progress_log_interval_docs,
+                max_documents_per_file=args.max_documents_per_file,
                 worker_label=worker_label,
             )
         )
@@ -496,6 +515,7 @@ def main() -> None:
                 overwrite=args.overwrite,
                 skip_existing=args.skip_existing,
                 progress_log_interval_docs=args.progress_log_interval_docs,
+                max_documents_per_file=args.max_documents_per_file,
                 worker_label=worker_label,
             )
         )
