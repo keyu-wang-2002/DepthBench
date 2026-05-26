@@ -49,7 +49,7 @@ PY
 fi
 
 # Keep compatibility with original example script defaults.
-NPROC_PER_NODE="${NPROC_PER_NODE:-1}"
+NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
 MASTER_PORT="${MASTER_PORT:-35100}"
 MASTER_ADDR="${MASTER_ADDR:-localhost}"
 
