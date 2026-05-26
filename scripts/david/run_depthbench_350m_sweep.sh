@@ -17,6 +17,37 @@ cd "$REPO_ROOT"
 source "${HOME}/miniforge3/etc/profile.d/conda.sh"
 conda activate depthbench
 
+# If WANDB_API_KEY is not already provided, try to load it from where wandb login stores it.
+# W&B commonly stores the key in ~/.netrc under api.wandb.ai.
+if [[ -z "${WANDB_API_KEY:-}" ]]; then
+  WANDB_API_KEY="$(python - <<'PY'
+import netrc
+
+hosts = ("api.wandb.ai", "wandb.ai")
+key = ""
+
+try:
+    n = netrc.netrc()
+    for h in hosts:
+        auth = n.authenticators(h)
+        if auth and auth[2]:
+            key = auth[2]
+            break
+except Exception:
+    pass
+
+print(key)
+PY
+)"
+
+  if [[ -n "${WANDB_API_KEY}" ]]; then
+    export WANDB_API_KEY
+    echo "[DepthBench] Loaded WANDB_API_KEY from ~/.netrc"
+  else
+    echo "[DepthBench] WARNING: WANDB_API_KEY is unset and no key was found in ~/.netrc"
+  fi
+fi
+
 # Keep compatibility with original example script defaults.
 NPROC_PER_NODE="${NPROC_PER_NODE:-1}"
 MASTER_PORT="${MASTER_PORT:-35100}"
@@ -50,3 +81,4 @@ torchrun \
   --eval-interval=400 \
   --save-interval=30000000 \
   --save-folder="$SAVE_FOLDER" \
+  --wandb-project="depthbench" \
