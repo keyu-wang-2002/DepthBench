@@ -4,9 +4,9 @@ getenv     = True
 
 arguments  = ./scripts/david/run_depthbench_350m_sweep.sh $(lr) $(cfg) $(seed) $(Cluster)_$(Process)
 
-request_cpus   = 8
-request_memory = 32GB
-request_gpus   = 1
+request_cpus   = 16
+request_memory = 256GB
+request_gpus   = 4
 requirements   = regexp("H100", TARGET.CUDADeviceName) && !regexp("g174", TARGET.Machine)
 
 log    = condor_logs/depthbench_350m_cfg$(cfg_tag)_lr$(lr)_s$(seed)_$(Cluster)_$(Process).log
