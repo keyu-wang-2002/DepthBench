@@ -432,6 +432,99 @@ class PeriNormTransformerBlock(TransformerBlock):
         )
 
 
+class KeelTransformerBlock(TransformerBlock):
+    """
+    KEEL (https://arxiv.org/pdf/2601.19895) transformer block.
+
+    For all sublayers but the first, the update follows:
+
+    ``x = post_norm(alpha * x + F(pre_norm(x)))``
+
+    where ``alpha = 2 * n_layers`` for decoder-only transformers.
+
+    Special cases for the very first transformer block (``block_idx == 0``):
+
+    - first attention sublayer: ``x = x + attn(pre_norm(x))``
+    - first FFN sublayer: ``x = post_norm(x + ffn(pre_norm(x)))``
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        n_layers: int,
+        sequence_mixer: SequenceMixerConfig,
+        feed_forward: FeedForwardConfig,
+        layer_norm: LayerNormConfig,
+        dropout: float = 0.0,
+        attention_residual_alpha: float = 1.0,
+        feed_forward_residual_alpha: float = 1.0,
+        attnres_block_size: Optional[int] = None,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ):
+        if attnres_block_size is not None:
+            raise ValueError("KEEL block does not support attnres_block_size")
+        if attention_residual_alpha != 1.0 or feed_forward_residual_alpha != 1.0:
+            raise ValueError(
+                "KEEL block does not use attention_residual_alpha/feed_forward_residual_alpha"
+            )
+
+        super().__init__(
+            d_model=d_model,
+            block_idx=block_idx,
+            n_layers=n_layers,
+            sequence_mixer=sequence_mixer,
+            feed_forward=feed_forward,
+            layer_norm=layer_norm,
+            dropout=dropout,
+            attention_residual_alpha=1.0,
+            feed_forward_residual_alpha=1.0,
+            attnres_block_size=None,
+            init_device=init_device,
+            cache=cache,
+        )
+
+        self.post_attention_norm = layer_norm.build(d_model, init_device=init_device)
+        self.post_feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
+        self.keel_alpha = float(2 * n_layers)
+        self.is_first_block = block_idx == 0
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        del loss_div_factor
+
+        attn_out = self.attention(self.attention_norm(x), **kwargs)
+        attn_out = self.attention_residual_stream.dropout(attn_out)
+        if self.is_first_block:
+            h = x + attn_out
+        else:
+            h = self.post_attention_norm(self.keel_alpha * x + attn_out)
+
+        mlp_out = self.feed_forward(self.feed_forward_norm(h))
+        mlp_out = self.feed_forward_residual_stream.dropout(mlp_out)
+        if self.is_first_block:
+            return self.post_feed_forward_norm(h + mlp_out)
+        return self.post_feed_forward_norm(self.keel_alpha * h + mlp_out)
+
+    def apply_tp(
+        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+    ):
+        super().apply_tp(tp_mesh, input_layout=input_layout, float8_enabled=float8_enabled)
+        parallelize_module(
+            self.post_feed_forward_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+        )
+        parallelize_module(
+            self.post_attention_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+        )
+
+
 @beta_feature
 class NormalizedTransformerBlock(TransformerBlockBase):
     """

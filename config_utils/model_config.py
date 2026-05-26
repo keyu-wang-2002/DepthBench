@@ -36,6 +36,7 @@ DIRECT_LLAMA_LIKE_KEYS = {
     "init_std",
     "embedding_init_std",
     "embed_scale",
+    "block_name",
     "attnres_block_size",
 }
 

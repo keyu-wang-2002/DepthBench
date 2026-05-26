@@ -120,6 +120,11 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`PeriNormTransformerBlock`
     """
 
+    keel = "keel"
+    """
+    ➡️ :class:`KeelTransformerBlock`
+    """
+
     normalized = "normalized"
     """
     ➡️ :class:`NormalizedTransformerBlock`
@@ -221,6 +226,7 @@ class TransformerBlockConfig(ModuleConfig):
         cache: Optional[BufferCache] = None,
     ) -> "TransformerBlockBase":
         from .block import (
+            KeelTransformerBlock,
             LayerNormScaledTransformerBlock,
             MoEHybridReorderedNormTransformerBlock,
             MoEHybridTransformerBlock,
@@ -251,6 +257,8 @@ class TransformerBlockConfig(ModuleConfig):
                 return ReorderedNormTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.peri_norm:
                 return PeriNormTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.keel:
+                return KeelTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.normalized:
                 return NormalizedTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe:

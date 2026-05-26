@@ -11,7 +11,7 @@ from typing import List, Optional, cast
 
 import rich
 
-DEPTHBENCH_ROOT = Path(__file__).resolve().parents[1]
+DEPTHBENCH_ROOT = Path(__file__).resolve().parents[2]
 OLMO_CORE_SRC = DEPTHBENCH_ROOT / "pretrain" / "OLMo-core" / "src"
 for path in (DEPTHBENCH_ROOT, OLMO_CORE_SRC):
     if str(path) not in sys.path:
@@ -52,7 +52,7 @@ from olmo_core.utils import seed_all
 
 log = logging.getLogger(__name__)
 
-PRETOKENIZED_DATA_ROOT = "data/fineweb-edu/pre-tokenize"
+PRETOKENIZED_DATA_ROOT = "/fast/wangk/data/fineweb-edu/pre-tokenize"
 PROJECT_CODE_ROOT = "DepthBench"
 TRAIN_DATA_GLOB = f"{PRETOKENIZED_DATA_ROOT}/train/*.npy"
 EVAL_DATA_GLOB = f"{PRETOKENIZED_DATA_ROOT}/eval/*.npy"
