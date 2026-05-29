@@ -328,11 +328,6 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
             init_device=init_device,
             cache=cache,
         )
-
-        # LayerNorm scaling factor 1/sqrt(layer_id), where layer_id is 1-based.
-        ln_scale_value = 1.0 / math.sqrt(block_idx + 1)
-        self.register_buffer("ln_scale", torch.tensor(ln_scale_value, dtype=torch.float32))
-
     def forward(
         self,
         x: torch.Tensor,
@@ -341,7 +336,7 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
-        scale = self.ln_scale.to(dtype=x.dtype, device=x.device)
+        scale = 1.0 / math.sqrt(self.block_idx + 1)
         h = self.attention_residual_stream(
             x, self.attention(self.attention_norm(x) * scale, **kwargs)
         )
