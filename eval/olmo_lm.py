@@ -92,11 +92,17 @@ def _load_hf_tokenizer(
 
 
 def _infer_model_max_length(
+    checkpoint_dir: str | Path,
     tokenizer: PreTrainedTokenizerBase,
     override: Optional[int] = None,
 ) -> Optional[int]:
     if override is not None:
         return override
+
+    config_dict = _load_checkpoint_config(checkpoint_dir)
+    max_sequence_length = config_dict.get("train_module", {}).get("max_sequence_length")
+    if isinstance(max_sequence_length, int) and max_sequence_length > 0:
+        return max_sequence_length
 
     model_max_length = getattr(tokenizer, "model_max_length", None)
     if model_max_length is None:
@@ -156,7 +162,11 @@ class OLMoNativeLM:
             **generation_kwargs,
         )
 
-        model_max_length = _infer_model_max_length(tokenizer, override=max_length)
+        model_max_length = _infer_model_max_length(
+            checkpoint_dir,
+            tokenizer,
+            override=max_length,
+        )
 
         class _OLMoNativeTemplateLM(TemplateLM):
             backend = "causal"
@@ -399,12 +409,20 @@ class OLMoNativeLM:
                     if not encoded:
                         encoded = [self.prefix_token_id]
 
+                    max_gen_toks = int(gen_kwargs.get("max_gen_toks", self.max_gen_toks))
+                    if self.max_length is not None:
+                        max_context_len = self.max_length - max_gen_toks
+                        if max_context_len <= 0:
+                            raise ValueError(
+                                "max_gen_toks must be smaller than the model context window."
+                            )
+                        encoded = encoded[-max_context_len:]
+
                     input_ids = torch.tensor(
                         [encoded],
                         dtype=torch.long,
                         device=self.generation_module.device,
                     )
-                    max_gen_toks = int(gen_kwargs.get("max_gen_toks", self.max_gen_toks))
                     generated_ids, _, _ = self.generation_module.generate_batch(
                         input_ids,
                         do_sample=False,
