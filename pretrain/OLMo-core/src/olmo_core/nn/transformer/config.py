@@ -154,6 +154,7 @@ class HyperConnectionsKind(StrEnum):
     hc = "hc"
     mhc = "mhc"
     mhc_static = "mhc_static"
+    liger_mhc = "liger_mhc"
 
 
 @dataclass
@@ -170,10 +171,23 @@ class HyperConnectionsConfig(Config):
     sinkhorn_tau: float = 1.0
     disable_static_weight_decay: bool = True
     scale_output_init_by_sqrt_n: bool = True
+    liger_phi_dtype: DType = DType.bfloat16
+    liger_allow_fp32: bool = False
+    liger_rms_eps: float = 1e-6
+    liger_pre_eps: float = 0.0
+    liger_sinkhorn_eps: float = 1e-6
+    liger_post_mult: float = 2.0
+    collapse: str = "auto"
 
     def __post_init__(self):
         if isinstance(self.kind, str):
             self.kind = HyperConnectionsKind(self.kind)
+        if isinstance(self.liger_phi_dtype, str):
+            self.liger_phi_dtype = DType(self.liger_phi_dtype)
+        if self.collapse not in {"auto", "sum", "mean"}:
+            raise OLMoConfigurationError(
+                "'collapse' for hyper_connections must be one of: auto, sum, mean"
+            )
 
     def build(
         self,
@@ -184,7 +198,24 @@ class HyperConnectionsConfig(Config):
         init_device: str,
         dtype,
     ):
-        from ..hyper_connections import HyperConnection
+        from ..hyper_connections import HyperConnection, LigerHyperConnection
+
+        if self.kind == HyperConnectionsKind.liger_mhc:
+            return LigerHyperConnection(
+                num_residual_streams=self.num_residual_streams,
+                dim=dim,
+                branch=branch,
+                gating_factor_init=self.gating_factor_init,
+                sinkhorn_iters=self.sinkhorn_iters,
+                init_device=init_device,
+                dtype=dtype,
+                phi_dtype=self.liger_phi_dtype.as_pt(),
+                allow_fp32=self.liger_allow_fp32,
+                rms_eps=self.liger_rms_eps,
+                pre_eps=self.liger_pre_eps,
+                sinkhorn_eps=self.liger_sinkhorn_eps,
+                post_mult=self.liger_post_mult,
+            )
 
         return HyperConnection(
             kind=self.kind.value,
@@ -206,6 +237,8 @@ class HyperConnectionsConfig(Config):
             return (n * (n + 1)) + (d_model * (n + 1)) + 1 + n + d_model + 1
         if self.kind == HyperConnectionsKind.mhc_static:
             return (n * n) + n + n
+        if self.kind == HyperConnectionsKind.liger_mhc:
+            return (d_model * n * ((n * n) + (2 * n))) + ((n * n) + (2 * n)) + 3
 
         flat_dim = d_model * n
         return (flat_dim * n) + (flat_dim * n) + (flat_dim * n * n) + 3 + n + n + (n * n)
@@ -215,9 +248,17 @@ class HyperConnectionsConfig(Config):
             names = ("static_alpha", "static_beta")
         elif self.kind == HyperConnectionsKind.mhc_static:
             names = ("H_res_logits", "H_pre_logits", "H_post_logits")
+        elif self.kind == HyperConnectionsKind.liger_mhc:
+            names = ("b", "alpha_pre", "alpha_post", "alpha_res")
         else:
             names = ("pre_bias", "post_bias", "residual_bias")
         return [f"{module_pattern}.{name}" for name in names]
+
+    @property
+    def reduce_mode(self) -> str:
+        if self.collapse == "auto":
+            return "mean" if self.kind == HyperConnectionsKind.liger_mhc else "sum"
+        return self.collapse
 
 
 @dataclass

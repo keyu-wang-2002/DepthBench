@@ -1,0 +1,46 @@
+universe = vanilla
+initialdir = /fast/wliu/yy/DepthBench_workspace/DepthBench
+executable = /bin/bash
+arguments = /fast/wliu/yy/DepthBench_workspace/DepthBench/scripts/run_mhc_linear_350m_8gpu.sh
+
+request_cpus = 16
+request_memory = 128000
+request_gpus = 4
+requirements = (TARGET.CUDAGlobalMemoryMb >= 80000) && (TARGET.CUDACapability >= 9.0) && ((TARGET.CUDADeviceName == "NVIDIA H100") || (TARGET.CUDADeviceName == "NVIDIA H100 80GB HBM3"))
+
+environment = "VENV_DIR=/fast/wliu/yy/DepthBench_workspace/DepthBench/.venv_b200 NPROC_PER_NODE=4 LEARNING_RATE=$(lr) DEVICE_TRAIN_MICROBATCH_SIZE=4 MASTER_PORT=$(port) MAX_STEPS=7600 WARMUP_STEPS=760 MODEL_CONFIG=/fast/wliu/yy/DepthBench_workspace/DepthBench/configs/llama_350M_liger_mhc_linear_$(shape).json RUN_NAME=pretrain-llama-350M-liger-mhc-linear-$(shape)-$(lr_tag)-h100-4gpu SAVE_FOLDER=/fast/wliu/yy/DepthBench_workspace/DepthBench/ckpt/depthbench/pretrain-llama-350M-liger-mhc-linear-$(shape)-$(lr_tag)-h100-4gpu SWANLAB_GROUP=liger_mhc_shape_sweep SWANLAB_TAGS=350M_liger_mhc_linear_$(shape)_$(lr_tag)_4gpu_h100_s4_fineweb-edu-100bt"
+
+output = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_train_350m_liger_mhc_linear_shape_sweep_$(shape)_$(lr_tag).$(ClusterId).$(ProcId).out
+error = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_train_350m_liger_mhc_linear_shape_sweep_$(shape)_$(lr_tag).$(ClusterId).$(ProcId).err
+log = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_train_350m_liger_mhc_linear_shape_sweep_$(shape)_$(lr_tag).$(ClusterId).$(ProcId).log
+
+queue shape, lr, lr_tag, port from (
+l16_h1216_i3248 5e-3 lr5e3 35300
+l16_h1216_i3248 2e-3 lr2e3 35301
+l16_h1216_i3248 1e-3 lr1e3 35302
+l16_h1216_i3248 5e-4 lr5e4 35303
+l20_h1120_i2992 5e-3 lr5e3 35310
+l20_h1120_i2992 2e-3 lr2e3 35311
+l20_h1120_i2992 1e-3 lr1e3 35312
+l20_h1120_i2992 5e-4 lr5e4 35313
+l24_h1024_i2736 5e-3 lr5e3 35320
+l24_h1024_i2736 2e-3 lr2e3 35321
+l24_h1024_i2736 1e-3 lr1e3 35322
+l24_h1024_i2736 5e-4 lr5e4 35323
+l26_h992_i2656 5e-3 lr5e3 35330
+l26_h992_i2656 2e-3 lr2e3 35331
+l26_h992_i2656 1e-3 lr1e3 35332
+l26_h992_i2656 5e-4 lr5e4 35333
+l28_h960_i2560 5e-3 lr5e3 35340
+l28_h960_i2560 2e-3 lr2e3 35341
+l28_h960_i2560 1e-3 lr1e3 35342
+l28_h960_i2560 5e-4 lr5e4 35343
+l30_h928_i2480 5e-3 lr5e3 35350
+l30_h928_i2480 2e-3 lr2e3 35351
+l30_h928_i2480 1e-3 lr1e3 35352
+l30_h928_i2480 5e-4 lr5e4 35353
+l32_h896_i2400 5e-3 lr5e3 35360
+l32_h896_i2400 2e-3 lr2e3 35361
+l32_h896_i2400 1e-3 lr1e3 35362
+l32_h896_i2400 5e-4 lr5e4 35363
+)

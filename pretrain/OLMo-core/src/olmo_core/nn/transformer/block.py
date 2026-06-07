@@ -189,6 +189,7 @@ class TransformerBlock(TransformerBlockBase):
             self._uses_hyper_connections = True
             self.hyper_connection_num_streams = hyper_connections.num_residual_streams
             self.hyper_connection_scale_output_init = hyper_connections.scale_output_init_by_sqrt_n
+            self.hyper_connection_reduce_mode = hyper_connections.reduce_mode
 
     def forward(
         self,

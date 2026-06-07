@@ -42,3 +42,25 @@ def test_roundtrip_with_hyper_connections():
     roundtripped = TransformerConfig.from_dict(config.as_config_dict())
 
     assert roundtripped.as_config_dict() == config.as_config_dict()
+
+
+def test_roundtrip_with_liger_mhc_hyper_connections():
+    config = TransformerConfig.llama_like(
+        d_model=128,
+        vocab_size=32000,
+        n_layers=2,
+        n_heads=8,
+        hyper_connections=HyperConnectionsConfig(
+            kind="liger_mhc",
+            num_residual_streams=4,
+            gating_factor_init=0.01,
+            sinkhorn_iters=20,
+            liger_phi_dtype="bfloat16",
+            liger_allow_fp32=False,
+            collapse="auto",
+        ),
+    )
+
+    roundtripped = TransformerConfig.from_dict(config.as_config_dict())
+
+    assert roundtripped.as_config_dict() == config.as_config_dict()

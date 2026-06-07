@@ -8,8 +8,9 @@ if [[ -f "${REPO_ROOT}/scripts/load_local_env.sh" ]]; then
     source "${REPO_ROOT}/scripts/load_local_env.sh"
 fi
 
-if [[ -f "${REPO_ROOT}/.venv/bin/activate" ]]; then
-    source "${REPO_ROOT}/.venv/bin/activate"
+VENV_DIR="${VENV_DIR:-${REPO_ROOT}/.venv}"
+if [[ -f "${VENV_DIR}/bin/activate" ]]; then
+    source "${VENV_DIR}/bin/activate"
 fi
 
 export NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
@@ -25,6 +26,7 @@ echo "REPO_ROOT=${REPO_ROOT}"
 echo "RUN_NAME=${RUN_NAME}"
 echo "SAVE_FOLDER=${SAVE_FOLDER}"
 echo "MODEL_CONFIG=${MODEL_CONFIG}"
+echo "VENV_DIR=${VENV_DIR}"
 echo "LEARNING_RATE=${LEARNING_RATE:-3e-4}"
 echo "DEVICE_TRAIN_MICROBATCH_SIZE=${DEVICE_TRAIN_MICROBATCH_SIZE:-4}"
 echo "MASTER_PORT=${MASTER_PORT:-35100}"

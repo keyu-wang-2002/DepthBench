@@ -1,0 +1,26 @@
+universe = vanilla
+initialdir = /fast/wliu/yy/DepthBench_workspace/DepthBench
+executable = /bin/bash
+arguments = /fast/wliu/yy/DepthBench_workspace/DepthBench/scripts/run_mhc_linear_350m_8gpu.sh
+
+request_cpus = 16
+request_memory = 128000
+request_gpus = 4
+requirements = (TARGET.CUDAGlobalMemoryMb >= 80000) && (TARGET.CUDACapability >= 9.0) && ((TARGET.CUDADeviceName == "NVIDIA H100") || (TARGET.CUDADeviceName == "NVIDIA H100 80GB HBM3"))
+
+environment = "VENV_DIR=/fast/wliu/yy/DepthBench_workspace/DepthBench/.venv_b200 NPROC_PER_NODE=4 LEARNING_RATE=$(lr) DEVICE_TRAIN_MICROBATCH_SIZE=4 MASTER_PORT=$(port) MAX_STEPS=7600 WARMUP_STEPS=760 MODEL_CONFIG=/fast/wliu/yy/DepthBench_workspace/DepthBench/configs/llama_350M_liger_mhc_linear_$(shape).json RUN_NAME=pretrain-llama-350M-liger-mhc-linear-$(shape)-$(lr_tag)-h100-4gpu SAVE_FOLDER=/fast/wliu/yy/DepthBench_workspace/DepthBench/ckpt/depthbench/pretrain-llama-350M-liger-mhc-linear-$(shape)-$(lr_tag)-h100-4gpu SWANLAB_GROUP=liger_mhc_shape_sweep SWANLAB_TAGS=350M_liger_mhc_linear_$(shape)_$(lr_tag)_4gpu_h100_s4_fineweb-edu-100bt"
+
+output = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_train_350m_liger_mhc_linear_edge_shapes_$(shape)_$(lr_tag).$(ClusterId).$(ProcId).out
+error = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_train_350m_liger_mhc_linear_edge_shapes_$(shape)_$(lr_tag).$(ClusterId).$(ProcId).err
+log = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_train_350m_liger_mhc_linear_edge_shapes_$(shape)_$(lr_tag).$(ClusterId).$(ProcId).log
+
+queue shape, lr, lr_tag, port from (
+l16_h1216_i3248 5e-3 lr5e3 35400
+l16_h1216_i3248 2e-3 lr2e3 35401
+l16_h1216_i3248 1e-3 lr1e3 35402
+l16_h1216_i3248 5e-4 lr5e4 35403
+l32_h896_i2400 5e-3 lr5e3 35460
+l32_h896_i2400 2e-3 lr2e3 35461
+l32_h896_i2400 1e-3 lr1e3 35462
+l32_h896_i2400 5e-4 lr5e4 35463
+)

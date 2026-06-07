@@ -1,5 +1,5 @@
 import math
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 import torch
 import torch.nn as nn
@@ -9,6 +9,7 @@ __all__ = [
     "HyperConnection",
     "HyperConnectionStreamExpand",
     "HyperConnectionStreamReduce",
+    "LigerHyperConnection",
     "sinkhorn_log",
 ]
 
@@ -75,15 +76,187 @@ class HyperConnectionStreamExpand(nn.Module):
 
 
 class HyperConnectionStreamReduce(nn.Module):
-    def __init__(self, num_streams: int):
+    def __init__(self, num_streams: int, mode: str = "sum"):
         super().__init__()
         self.num_streams = num_streams
+        if mode not in {"sum", "mean"}:
+            raise ValueError(f"Unsupported stream reduce mode: {mode}")
+        self.mode = mode
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.num_streams == 1:
             return x
         batch = x.shape[0] // self.num_streams
-        return x.reshape(batch, self.num_streams, *x.shape[1:]).sum(dim=1)
+        x = x.reshape(batch, self.num_streams, *x.shape[1:])
+        if self.mode == "mean":
+            return x.mean(dim=1)
+        return x.sum(dim=1)
+
+
+def _require_liger_mhc():
+    try:
+        from liger_kernel.transformers.functional import (  # type: ignore
+            liger_mhc_coeffs,
+            liger_mhc_post_res,
+            liger_mhc_pre,
+        )
+    except Exception as e:
+        raise ImportError(
+            "Liger-backed mHC requires liger-kernel>=0.8.0 with Liger mHC functional "
+            "APIs. Install it with `pip install 'liger-kernel>=0.8.0'` or from the "
+            "LinkedIn Liger-Kernel source tree."
+        ) from e
+
+    return liger_mhc_coeffs, liger_mhc_pre, liger_mhc_post_res
+
+
+def _check_liger_mhc_runtime(tmax: int):
+    if tmax < 8:
+        return
+
+    try:
+        from packaging.version import Version
+        import triton
+    except Exception as e:
+        raise RuntimeError(
+            "Liger-backed mHC with sinkhorn_iters>=8 requires a working Triton "
+            "runtime. Use an environment with torch>=2.8 and triton>=3.4 for "
+            "the paper-default sinkhorn_iters=20."
+        ) from e
+
+    if Version(triton.__version__) < Version("3.4.0"):
+        raise RuntimeError(
+            f"Liger-backed mHC sinkhorn_iters={tmax} is not usable with "
+            f"triton {triton.__version__}: the coefficient kernel can hang at "
+            "the paper-default tmax=20. Use the newer torch>=2.8 / triton>=3.4 "
+            "environment, or lower sinkhorn_iters only for debugging."
+        )
+
+
+class LigerHyperConnection(nn.Module):
+    """
+    Liger-backed mHC residual backend.
+
+    The transformer keeps residual streams folded into the batch dimension with shape
+    ``(batch_size * num_streams, seq_len, d_model)``. Liger's kernels operate on
+    ``(..., num_streams, d_model)``, so this module reshapes only around the fused
+    coefficient/pre/post-res kernels.
+    """
+
+    def __init__(
+        self,
+        *,
+        num_residual_streams: int,
+        dim: int,
+        branch: Optional[nn.Module] = None,
+        gating_factor_init: float = 0.01,
+        sinkhorn_iters: int = 20,
+        init_device: str = "cpu",
+        dtype: torch.dtype = torch.float32,
+        phi_dtype: torch.dtype = torch.bfloat16,
+        allow_fp32: bool = False,
+        rms_eps: float = 1e-6,
+        pre_eps: float = 0.0,
+        sinkhorn_eps: float = 1e-6,
+        post_mult: float = 2.0,
+    ):
+        super().__init__()
+
+        if num_residual_streams < 1:
+            raise ValueError("'num_residual_streams' must be >= 1")
+
+        self.liger_mhc_coeffs, self.liger_mhc_pre, self.liger_mhc_post_res = (
+            _require_liger_mhc()
+        )
+        _check_liger_mhc_runtime(sinkhorn_iters)
+
+        self.kind = "liger_mhc"
+        self.branch = branch
+        self.num_residual_streams = num_residual_streams
+        self.dim = dim
+        self.tmax = int(sinkhorn_iters)
+        self.gating_factor_init = float(gating_factor_init)
+        self.allow_fp32 = bool(allow_fp32)
+        self.rms_eps = float(rms_eps)
+        self.pre_eps = float(pre_eps)
+        self.sinkhorn_eps = float(sinkhorn_eps)
+        self.post_mult = float(post_mult)
+        self.dropout = nn.Identity()
+
+        k = num_residual_streams * dim
+        m = num_residual_streams * num_residual_streams + 2 * num_residual_streams
+        self.phi = nn.Parameter(
+            torch.empty(k, m, device=init_device, dtype=phi_dtype)
+        )
+        self.b = nn.Parameter(torch.empty(m, device=init_device, dtype=torch.float32))
+        self.alpha_pre = nn.Parameter(
+            torch.empty((), device=init_device, dtype=torch.float32)
+        )
+        self.alpha_post = nn.Parameter(
+            torch.empty((), device=init_device, dtype=torch.float32)
+        )
+        self.alpha_res = nn.Parameter(
+            torch.empty((), device=init_device, dtype=torch.float32)
+        )
+        self.reset_parameters()
+
+    @torch.no_grad()
+    def reset_parameters(self):
+        self.phi.normal_(mean=0.0, std=0.02)
+        self.b.zero_()
+        self.alpha_pre.fill_(self.gating_factor_init)
+        self.alpha_post.fill_(self.gating_factor_init)
+        self.alpha_res.fill_(self.gating_factor_init)
+
+    def _branch_param_dtype(self, fallback: torch.dtype) -> torch.dtype:
+        if self.branch is None:
+            return fallback
+        for param in self.branch.parameters(recurse=True):
+            return param.dtype
+        return fallback
+
+    def forward(self, residuals: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
+        streams = _reshape_to_streams(residuals, self.num_residual_streams).contiguous()
+        if streams.shape[-2] != self.num_residual_streams or streams.shape[-1] != self.dim:
+            raise ValueError(
+                f"Expected Liger mHC streams with shape [..., {self.num_residual_streams}, "
+                f"{self.dim}], got {tuple(streams.shape)}"
+            )
+
+        h_pre, h_post, h_res = self.liger_mhc_coeffs(
+            streams,
+            self.phi,
+            self.b,
+            self.alpha_pre,
+            self.alpha_post,
+            self.alpha_res,
+            allow_fp32=self.allow_fp32,
+            tmax=self.tmax,
+            rms_eps=self.rms_eps,
+            pre_eps=self.pre_eps,
+            sinkhorn_eps=self.sinkhorn_eps,
+            post_mult=self.post_mult,
+        )
+        branch_input = self.liger_mhc_pre(streams, h_pre)
+        branch_dtype = self._branch_param_dtype(branch_input.dtype)
+        if branch_input.dtype != branch_dtype:
+            branch_input = branch_input.to(dtype=branch_dtype)
+
+        branch_output = (
+            self.branch(branch_input, *args, **kwargs)
+            if self.branch is not None
+            else branch_input
+        )
+        (branch_output, *rest), tree_spec = tree_flatten(branch_output)
+        output = self.liger_mhc_post_res(
+            streams,
+            branch_output.to(dtype=streams.dtype),
+            h_post,
+            h_res,
+        )
+        output = self.dropout(_flatten_from_streams(output).to(dtype=residuals.dtype))
+
+        return tree_unflatten((output, *rest), tree_spec)
 
 
 class HyperConnection(nn.Module):

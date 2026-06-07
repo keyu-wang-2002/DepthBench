@@ -1,0 +1,13 @@
+universe = vanilla
+initialdir = /fast/wliu/yy/DepthBench_workspace/DepthBench
+executable = /bin/bash
+arguments = /fast/wliu/yy/DepthBench_workspace/DepthBench/scripts/run_mhc_linear_350m_8gpu.sh
+request_cpus = 16
+request_memory = 128000
+request_gpus = 4
+requirements = (TARGET.CUDAGlobalMemoryMb >= 80000) && (TARGET.CUDACapability >= 9.0) && ((TARGET.CUDADeviceName == "NVIDIA H100") || (TARGET.CUDADeviceName == "NVIDIA H100 80GB HBM3"))
+environment = "VENV_DIR=/fast/wliu/yy/DepthBench_workspace/DepthBench/.venv NPROC_PER_NODE=4 LEARNING_RATE=5e-4 DEVICE_TRAIN_MICROBATCH_SIZE=4 MASTER_PORT=35266 RUN_NAME=pretrain-llama-350M-mhc-linear-s4-lr5e-4-h100-4gpu SAVE_FOLDER=/fast/wliu/yy/DepthBench_workspace/DepthBench/ckpt/depthbench/pretrain-llama-350M-mhc-linear-s4-lr5e-4-h100-4gpu SWANLAB_TAGS=350M_mhc_linear_tanh_false_4gpu_h100_s4_fineweb-edu-100bt"
+output = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_train_350m_mhc_linear_lr5e4_4gpu_h100.$(ClusterId).$(ProcId).out
+error = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_train_350m_mhc_linear_lr5e4_4gpu_h100.$(ClusterId).$(ProcId).err
+log = /fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor_train_350m_mhc_linear_lr5e4_4gpu_h100.$(ClusterId).$(ProcId).log
+queue
