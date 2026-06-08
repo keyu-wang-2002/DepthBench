@@ -45,6 +45,7 @@ from ..attention import (
 )
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
+from ..hyper_connections import HyperConnectionStreamExpand, HyperConnectionStreamReduce
 from ..layer_norm import LayerNormConfig
 from ..lm_head import LMHeadConfig, LMOutputWithLoss
 from ..moe import MoEBase
@@ -160,6 +161,48 @@ class Transformer(nn.Module):
                     cache=cache,
                 )
             )
+
+        hyper_blocks = [
+            cast(TransformerBlockBase, block)
+            for block in self.blocks.values()
+            if getattr(block, "_uses_hyper_connections", False)
+        ]
+        self._hyper_connection_enabled = len(hyper_blocks) > 0
+        self._hyper_connection_num_streams = 1
+        self._hyper_connection_scale_output_init = False
+        self._hyper_connection_reduce_mode = "sum"
+        if self._hyper_connection_enabled:
+            if len(hyper_blocks) != n_layers:
+                raise OLMoConfigurationError(
+                    "HC / mHC residual routing must be configured for all transformer blocks"
+                )
+
+            num_streams = {block.hyper_connection_num_streams for block in hyper_blocks}
+            if len(num_streams) != 1:
+                raise OLMoConfigurationError(
+                    "All HC / mHC blocks must use the same residual stream expansion rate"
+                )
+
+            reduce_modes = {block.hyper_connection_reduce_mode for block in hyper_blocks}
+            if len(reduce_modes) != 1:
+                raise OLMoConfigurationError(
+                    "All HC / mHC blocks must use the same residual stream collapse mode"
+                )
+
+            self._hyper_connection_num_streams = num_streams.pop()
+            self._hyper_connection_reduce_mode = reduce_modes.pop()
+            self._hyper_connection_scale_output_init = any(
+                block.hyper_connection_scale_output_init for block in hyper_blocks
+            )
+
+        self.expand_residual_streams = HyperConnectionStreamExpand(
+            self._hyper_connection_num_streams
+        )
+        self.reduce_residual_streams = HyperConnectionStreamReduce(
+            self._hyper_connection_num_streams,
+            mode=self._hyper_connection_reduce_mode,
+        )
+
         self.lm_head = lm_head.build(
             d_model=d_model, vocab_size=vocab_size, init_device=init_device
         )
@@ -167,6 +210,8 @@ class Transformer(nn.Module):
         self._attnres_enabled = any(
             getattr(b, "attnres_block_size", None) is not None for b in self.blocks.values()
         )
+        if self._hyper_connection_enabled and self._attnres_enabled:
+            raise OLMoConfigurationError("HC / mHC residual routing cannot be combined with AttnRes")
         if self._attnres_enabled:
             from ..layer_norm import LayerNormConfig, LayerNormType
 
@@ -335,6 +380,13 @@ class Transformer(nn.Module):
                     std=self.init_std,
                     generator=generator,
                 )
+
+            if self._hyper_connection_enabled and self._hyper_connection_scale_output_init:
+                scale = math.sqrt(self._hyper_connection_num_streams)
+                if hasattr(att, "w_out"):
+                    att.w_out.weight.div_(scale)
+                if hasattr(block.feed_forward, "w2"):
+                    block.feed_forward.w2.weight.div_(scale)
 
             # MoE weights.
             if hasattr(block, "feed_forward_moe"):
@@ -569,6 +621,8 @@ class Transformer(nn.Module):
             h = h * self.embed_scale
         if self.embedding_norm is not None:
             h = self.embedding_norm(h)
+        if self._hyper_connection_enabled and self.embeddings is not None:
+            h = self.expand_residual_streams(h)
 
         attnres_states: Optional[List[torch.Tensor]] = None
 
@@ -603,6 +657,14 @@ class Transformer(nn.Module):
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
+            if self._hyper_connection_enabled:
+                if self._hyper_connection_reduce_mode == "mean":
+                    h = self.reduce_residual_streams(h)
+                else:
+                    if self.lm_head.norm is not None:
+                        h = self.lm_head.norm(h)
+                    h = self.reduce_residual_streams(h)
+                    lm_head_kwargs["skip_norm"] = True
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
                 if labels is not None:

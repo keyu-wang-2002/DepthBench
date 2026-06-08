@@ -23,7 +23,7 @@ from ..layer_norm import LayerNormConfig
 from ..moe import MoEConfig, MoERouter
 from ..moe.parallel_mlp import ParallelMLPBase
 from ..residual_stream import ResidualStream
-from .config import TransformerDataParallelWrappingStrategy
+from .config import HyperConnectionsConfig, TransformerDataParallelWrappingStrategy
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
@@ -37,6 +37,10 @@ class TransformerBlockBase(nn.Module):
     def __init__(self, *, n_layers: int):
         super().__init__()
         self.n_layers = n_layers
+        self._uses_hyper_connections = False
+        self.hyper_connection_num_streams = 1
+        self.hyper_connection_scale_output_init = False
+        self.hyper_connection_reduce_mode = "sum"
 
     @property
     def is_moe(self) -> bool:
@@ -93,6 +97,26 @@ class TransformerBlockBase(nn.Module):
         raise NotImplementedError
 
 
+class PreNormAttentionBranch(nn.Module):
+    def __init__(self, norm: nn.Module, attention: nn.Module):
+        super().__init__()
+        self.norm = norm
+        self.attention = attention
+
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        return self.attention(self.norm(x), **kwargs)
+
+
+class PreNormFeedForwardBranch(nn.Module):
+    def __init__(self, norm: nn.Module, feed_forward: nn.Module):
+        super().__init__()
+        self.norm = norm
+        self.feed_forward = feed_forward
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.feed_forward(self.norm(x))
+
+
 class TransformerBlock(TransformerBlockBase):
     """
     A typical "Llama-style" transformer block implementation.
@@ -118,6 +142,7 @@ class TransformerBlock(TransformerBlockBase):
         dropout: float = 0.0,
         attention_residual_alpha: float = 1.0,
         feed_forward_residual_alpha: float = 1.0,
+        hyper_connections: Optional[HyperConnectionsConfig] = None,
         attnres_block_size: Optional[int] = None,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
@@ -125,6 +150,8 @@ class TransformerBlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
+        if hyper_connections is not None and attnres_block_size is not None:
+            raise NotImplementedError("HC / mHC residual routing cannot be combined with AttnRes")
 
         # NOTE: The `self.attention` naming is kept for backwards compatibility with old checkpoints.
         # `self.attention` could contain any `SequenceMixer` implementation, such as a `GatedDeltaNet`.
@@ -133,14 +160,40 @@ class TransformerBlock(TransformerBlockBase):
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )
         self.attention_norm = layer_norm.build(d_model, init_device=init_device)
-        self.attention_residual_stream = ResidualStream(
-            alpha=attention_residual_alpha, dropout=dropout
-        )
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
         self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
-        self.feed_forward_residual_stream = ResidualStream(
-            alpha=feed_forward_residual_alpha, dropout=dropout
-        )
+
+        if hyper_connections is None:
+            self.attention_residual_stream = ResidualStream(
+                alpha=attention_residual_alpha, dropout=dropout
+            )
+            self.feed_forward_residual_stream = ResidualStream(
+                alpha=feed_forward_residual_alpha, dropout=dropout
+            )
+            self.attention_hyper_connection = None
+            self.feed_forward_hyper_connection = None
+        else:
+            connector_dtype = next(self.attention.parameters()).dtype
+            self.attention_hyper_connection = hyper_connections.build(
+                dim=d_model,
+                branch=PreNormAttentionBranch(self.attention_norm, self.attention),
+                layer_index=block_idx * 2,
+                init_device=init_device,
+                dtype=connector_dtype,
+            )
+            self.feed_forward_hyper_connection = hyper_connections.build(
+                dim=d_model,
+                branch=PreNormFeedForwardBranch(self.feed_forward_norm, self.feed_forward),
+                layer_index=block_idx * 2 + 1,
+                init_device=init_device,
+                dtype=connector_dtype,
+            )
+            self.attention_residual_stream = None
+            self.feed_forward_residual_stream = None
+            self._uses_hyper_connections = True
+            self.hyper_connection_num_streams = hyper_connections.num_residual_streams
+            self.hyper_connection_scale_output_init = hyper_connections.scale_output_init_by_sqrt_n
+            self.hyper_connection_reduce_mode = hyper_connections.reduce_mode
 
         self.attnres_block_size = attnres_block_size
         if attnres_block_size is not None:
@@ -166,6 +219,12 @@ class TransformerBlock(TransformerBlockBase):
         **kwargs,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, list]]:
         del loss_div_factor
+
+        if self._uses_hyper_connections:
+            assert self.attention_hyper_connection is not None
+            assert self.feed_forward_hyper_connection is not None
+            h = self.attention_hyper_connection(x, **kwargs)
+            return self.feed_forward_hyper_connection(h)
 
         if self.attnres_block_size is not None:
             from olmo_core.kernels.attnres import fused_attnres
@@ -207,6 +266,8 @@ class TransformerBlock(TransformerBlockBase):
             h = mlp_out if prefix_sum is None else prefix_sum + mlp_out
             return h, attnres_states
         else:
+            assert self.attention_residual_stream is not None
+            assert self.feed_forward_residual_stream is not None
             h = self.attention_residual_stream(x, self.attention(self.attention_norm(x), **kwargs))
             return self.feed_forward_residual_stream(
                 h, self.feed_forward(self.feed_forward_norm(h))
@@ -215,6 +276,9 @@ class TransformerBlock(TransformerBlockBase):
     def apply_tp(
         self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
     ):
+        if self._uses_hyper_connections:
+            raise NotImplementedError("Tensor parallelism is not implemented for HC / mHC blocks")
+
         parallelize_module(
             self,
             device_mesh=tp_mesh,
@@ -264,6 +328,9 @@ class TransformerBlock(TransformerBlockBase):
         ring: Optional[RingContextParallelStyle] = None,
         uly: Optional[UlyssesContextParallelStyle] = None,
     ):
+        if self._uses_hyper_connections:
+            raise NotImplementedError("Context parallelism is not implemented for HC / mHC blocks")
+
         self.attention.apply_cp(cp_mesh, ring=ring, uly=uly)
 
     def apply_fsdp(
@@ -312,9 +379,14 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
         dropout: float = 0.0,
         attention_residual_alpha: float = 1.0,
         feed_forward_residual_alpha: float = 1.0,
+        hyper_connections: Optional[HyperConnectionsConfig] = None,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
+        if hyper_connections is not None:
+            raise NotImplementedError(
+                "LayerNormScaledTransformerBlock does not support HC / mHC residual routing"
+            )
         super().__init__(
             d_model=d_model,
             block_idx=block_idx,
@@ -325,6 +397,7 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
             dropout=dropout,
             attention_residual_alpha=attention_residual_alpha,
             feed_forward_residual_alpha=feed_forward_residual_alpha,
+            hyper_connections=hyper_connections,
             init_device=init_device,
             cache=cache,
         )
@@ -340,6 +413,10 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
+        if self._uses_hyper_connections:
+            raise NotImplementedError(
+                "LayerNormScaledTransformerBlock does not support HC / mHC residual routing"
+            )
         h = self.attention_residual_stream(
             x, self.attention(self.attention_norm(x) * self.ln_scale, **kwargs)
         )
@@ -363,6 +440,10 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
+        if self._uses_hyper_connections:
+            raise NotImplementedError(
+                "ReorderedNormTransformerBlock does not support HC / mHC residual routing"
+            )
         h = self.attention_residual_stream(x, self.attention_norm(self.attention(x, **kwargs)))
         return self.feed_forward_residual_stream(h, self.feed_forward_norm(self.feed_forward(h)))
 
@@ -384,9 +465,14 @@ class PeriNormTransformerBlock(TransformerBlock):
         dropout: float = 0.0,
         attention_residual_alpha: float = 1.0,
         feed_forward_residual_alpha: float = 1.0,
+        hyper_connections: Optional[HyperConnectionsConfig] = None,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
+        if hyper_connections is not None:
+            raise NotImplementedError(
+                "PeriNormTransformerBlock does not support HC / mHC residual routing"
+            )
         super().__init__(
             d_model=d_model,
             block_idx=block_idx,
@@ -397,6 +483,7 @@ class PeriNormTransformerBlock(TransformerBlock):
             dropout=dropout,
             attention_residual_alpha=attention_residual_alpha,
             feed_forward_residual_alpha=feed_forward_residual_alpha,
+            hyper_connections=hyper_connections,
             init_device=init_device,
             cache=cache,
         )
@@ -411,6 +498,10 @@ class PeriNormTransformerBlock(TransformerBlock):
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
+        if self._uses_hyper_connections:
+            raise NotImplementedError(
+                "PeriNormTransformerBlock does not support HC / mHC residual routing"
+            )
         h = self.attention_residual_stream(
             x, self.post_attention_norm(self.attention(self.attention_norm(x), **kwargs))
         )

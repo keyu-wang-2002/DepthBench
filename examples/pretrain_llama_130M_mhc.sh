@@ -1,0 +1,34 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+if [[ -f "${REPO_ROOT}/.venv/bin/activate" ]]; then
+    source "${REPO_ROOT}/.venv/bin/activate"
+fi
+
+torchrun \
+    --nproc_per_node="${NPROC_PER_NODE:-8}" \
+    --master_port="${MASTER_PORT:-35102}" \
+    --master_addr="${MASTER_ADDR:-localhost}" \
+    "${SCRIPT_DIR}/pretrain_llama_base.py" \
+    --run_name="${RUN_NAME:-pretrain-llama-130M-mhc-s4-lr1e-3}" \
+    --model-config="${MODEL_CONFIG:-${REPO_ROOT}/configs/llama_130M_mhc.json}" \
+    --tokenizer-name-or-path="${TOKENIZER_PATH:-${REPO_ROOT}/pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json}" \
+    --train-data-glob="${TRAIN_DATA_GLOB:-${REPO_ROOT}/data/fineweb-edu/pre-tokenize/train/*.npy}" \
+    --eval-data-glob="${EVAL_DATA_GLOB:-${REPO_ROOT}/data/fineweb-edu/pre-tokenize/eval/*.npy}" \
+    --seed="${SEED:-42}" \
+    --max-steps="${MAX_STEPS:-2600}" \
+    --global-train-batch-size="${GLOBAL_TRAIN_BATCH_SIZE:-512}" \
+    --device-train-microbatch-size="${DEVICE_TRAIN_MICROBATCH_SIZE:-16}" \
+    --learning-rate="${LEARNING_RATE:-1e-3}" \
+    --warmup-steps="${WARMUP_STEPS:-260}" \
+    --eval-interval="${EVAL_INTERVAL:-200}" \
+    --save-interval="${SAVE_INTERVAL:-1000}" \
+    --save-folder="${SAVE_FOLDER:-${REPO_ROOT}/ckpt/depthbench/pretrain-llama-130M-mhc-s4-lr1e-3}" \
+    --wandb-project="${WANDB_PROJECT:-}" \
+    --wandb-entity="${WANDB_ENTITY:-}" \
+    --enable-layer-stats \
+    --layer-stats-interval "${LAYER_STATS_INTERVAL:-1}" \
+    "$@"

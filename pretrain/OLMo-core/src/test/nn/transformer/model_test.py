@@ -1,5 +1,6 @@
 import logging
 from dataclasses import replace
+from packaging.version import Version
 from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
 from typing import Optional, cast
 
@@ -37,6 +38,7 @@ from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
 from olmo_core.nn.rope import RoPEConfig
 from olmo_core.nn.transformer import (
+    HyperConnectionsConfig,
     MoEHybridTransformerBlockBase,
     MoEReorderedNormTransformerBlock,
     MoETransformer,
@@ -59,6 +61,15 @@ from olmo_core.testing.utils import FLA_MARKS, has_fla
 from olmo_core.utils import get_default_device, seed_all
 
 log = logging.getLogger(__name__)
+
+
+def requires_liger_mhc_runtime():
+    pytest.importorskip("liger_kernel")
+    if not torch.cuda.is_available():
+        pytest.skip("Liger mHC kernels require CUDA")
+    triton = pytest.importorskip("triton")
+    if Version(triton.__version__) < Version("3.4.0"):
+        pytest.skip("Liger mHC tmax=20 requires triton>=3.4")
 
 
 @pytest.mark.parametrize(
@@ -140,6 +151,94 @@ def test_small_ngpt_builder_config(init_device, device):
 
     # Make sure all weights are normalized in the embedding dimension.
     check_ngpt_matrices(model, config.d_model)
+
+
+@pytest.mark.parametrize("kind", ["hc", "mhc", "mhc_static"])
+def test_small_llama_builder_with_hyper_connections(kind: str):
+    config = TransformerConfig.llama_like(
+        d_model=128,
+        vocab_size=16_000,
+        n_layers=2,
+        n_heads=8,
+        fused_ops=False,
+        dtype=DType.float32,
+        hyper_connections=HyperConnectionsConfig(kind=kind, num_residual_streams=4),
+    )
+
+    model = config.build(init_device="cpu")
+    model.init_weights(device=torch.device("cpu"), max_seq_len=128)
+
+    logits = model(input_ids=get_transformer_inputs())
+    assert logits.shape == (1, 128, 16_000)
+
+
+def test_liger_mhc_connector_forward_backward():
+    requires_liger_mhc_runtime()
+
+    from olmo_core.nn.hyper_connections import LigerHyperConnection
+
+    device = torch.device("cuda")
+    dtype = torch.bfloat16
+    branch = nn.Linear(64, 64, bias=False, device=device, dtype=dtype)
+    connector = LigerHyperConnection(
+        num_residual_streams=4,
+        dim=64,
+        branch=branch,
+        gating_factor_init=0.01,
+        sinkhorn_iters=20,
+        init_device="cuda",
+        dtype=dtype,
+        phi_dtype=dtype,
+    )
+
+    x = torch.randn(8, 16, 64, device=device, dtype=dtype, requires_grad=True)
+    y = connector(x)
+
+    assert y.shape == x.shape
+    y.float().square().mean().backward()
+
+    params = [
+        connector.phi,
+        connector.b,
+        connector.alpha_pre,
+        connector.alpha_post,
+        connector.alpha_res,
+        branch.weight,
+    ]
+    for param in params:
+        assert param.grad is not None
+        assert torch.isfinite(param.grad).all()
+
+
+def test_tiny_llama_builder_with_liger_mhc_forward_backward():
+    requires_liger_mhc_runtime()
+
+    device = torch.device("cuda")
+    config = TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=256,
+        n_layers=2,
+        n_heads=4,
+        fused_ops=False,
+        dtype=DType.bfloat16,
+        hyper_connections=HyperConnectionsConfig(
+            kind="liger_mhc",
+            num_residual_streams=4,
+            gating_factor_init=0.01,
+            sinkhorn_iters=20,
+            liger_phi_dtype=DType.bfloat16,
+        ),
+    )
+
+    model = config.build(init_device="cuda")
+    model.init_weights(device=device, max_seq_len=16)
+    input_ids = torch.randint(0, config.vocab_size, (2, 16), device=device)
+
+    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        output = model(input_ids=input_ids, labels=input_ids)
+
+    output.loss.backward()
+    assert torch.isfinite(output.loss)
 
 
 def run_ngpt_with_fsdp2():

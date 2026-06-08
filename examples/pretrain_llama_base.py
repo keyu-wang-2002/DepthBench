@@ -28,8 +28,8 @@ from olmo_core.data import (
 from olmo_core.data.numpy_dataset import NumpyDatasetConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank
-from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import AdamWConfig, CosWithWarmup
+from olmo_core.nn.transformer import HyperConnectionsConfig, TransformerConfig
+from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
     Duration,
     TrainerConfig,
@@ -82,6 +82,11 @@ def build_config(args: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         args.model_config,
         tokenizer_vocab_size=tokenizer_config.vocab_size,
     )
+    hyper_connections = raw_model_config.get("hyper_connections")
+    if hyper_connections is not None:
+        if not isinstance(hyper_connections, dict):
+            raise TypeError("'hyper_connections' in model config must be a JSON object")
+        model_kwargs["hyper_connections"] = HyperConnectionsConfig.from_dict(hyper_connections)
 
     sequence_length = args.sequence_length or raw_model_config.get("max_sequence_length", 2048)
     model_config = TransformerConfig.llama_like(**model_kwargs)
@@ -102,6 +107,27 @@ def build_config(args: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         num_workers=args.data_loader_num_workers,
     )
 
+    optim_group_overrides: Optional[List[OptimGroupOverride]] = None
+    block_configs = model_config.resolved_block_configs
+    hyper_block_configs = [
+        block_config
+        for block_config in block_configs
+        if block_config.hyper_connections is not None
+    ]
+    if hyper_block_configs:
+        hyper_config = hyper_block_configs[0].hyper_connections
+        assert hyper_config is not None
+        if hyper_config.disable_static_weight_decay:
+            static_patterns = (
+                hyper_config.static_parameter_patterns("blocks.*.attention_hyper_connection")
+                + hyper_config.static_parameter_patterns(
+                    "blocks.*.feed_forward_hyper_connection"
+                )
+            )
+            optim_group_overrides = [
+                OptimGroupOverride(params=static_patterns, opts={"weight_decay": 0.0})
+            ]
+
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size_tokens,
         max_sequence_length=sequence_length,
@@ -110,6 +136,7 @@ def build_config(args: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             betas=(0.9, 0.95),
             eps=1e-8,
             weight_decay=0.1,
+            group_overrides=optim_group_overrides,
         ),
         scheduler=CosWithWarmup(
             warmup=args.warmup_steps,
