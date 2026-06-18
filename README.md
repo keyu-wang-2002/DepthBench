@@ -71,7 +71,7 @@ The following model configs are currently available under: [`./configs`](./confi
 | 350M | 1024 | 2736 | 16 | 24 | 8B | 512 | 2048 | 7.6k |
 | 1B | 2048 | 5461 | 32 | 24 | 21B | 512 | 2048 | 20k |
 
-### 350M Aspect-Ratio Variants
+### 350M Aspect-Ratio Variants (names in config will be modified to 400M)
 
 | Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Backbone Diff | Total Size | Total Diff |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
