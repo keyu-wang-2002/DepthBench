@@ -2,24 +2,29 @@ universe   = vanilla
 executable = /bin/bash
 getenv     = True
 
-arguments  = ./scripts/david/run_depthbench_350m_sweep.sh $(lr) $(cfg) $(seed) $(Cluster)_$(Process)
+arguments  = ./scripts/david/run_depthbench_350m_sweep.sh $(lr) $(cfg) $(seed) $(Cluster)_$(Process) $(master_port)
 
 request_cpus   = 16
 request_memory = 256GB
 request_gpus   = 4
-requirements   = regexp("H100", TARGET.CUDADeviceName) && !regexp("g174", TARGET.Machine)
+requirements   = regexp("H100", TARGET.CUDADeviceName) && !regexp("i203", TARGET.Machine)
 
 log    = condor_logs/depthbench_350m_cfg$(cfg_tag)_lr$(lr)_s$(seed)_$(Cluster)_$(Process).log
 output = condor_logs/depthbench_350m_cfg$(cfg_tag)_lr$(lr)_s$(seed)_$(Cluster)_$(Process).out
 error  = condor_logs/depthbench_350m_cfg$(cfg_tag)_lr$(lr)_s$(seed)_$(Cluster)_$(Process).err
 
-# Sweep LRs and 350M configs from README table.
-queue lr,cfg,cfg_tag,seed from (
-  2e-3,configs/llama_350M_24l_backbone.json,24l,42
-  2e-3,configs/llama_350M_16l_backbone.json,16l,42
-  #2e-3,configs/llama_350M_20l_backbone.json,20l,42
-  #2e-3,configs/llama_350M_26l_backbone.json,26l,42
-  #2e-3,configs/llama_350M_28l_backbone.json,28l,42
-  #2e-3,configs/llama_350M_30l_backbone.json,30l,42
-  2e-3,configs/llama_350M_32l_backbone.json,32l,42
+# Sweep 350M KEEL configs from README table.
+queue lr,cfg,cfg_tag,seed,master_port from (
+  5e-3,configs/llama_350M_16l_keel.json,16l,42,35100
+  5e-3,configs/llama_350M_20l_keel.json,20l,42,35101
+  5e-3,configs/llama_350M_24l_keel.json,24l,42,35102
+  5e-3,configs/llama_350M_28l_keel.json,28l,42,35103
+  5e-3,configs/llama_350M_30l_keel.json,30l,42,35104
+  5e-3,configs/llama_350M_32l_keel.json,32l,42,35105
+  1e-3,configs/llama_350M_16l_keel.json,16l,42,35106
+  1e-3,configs/llama_350M_20l_keel.json,20l,42,35107
+  1e-3,configs/llama_350M_24l_keel.json,24l,42,35108
+  1e-3,configs/llama_350M_28l_keel.json,28l,42,35109
+  1e-3,configs/llama_350M_30l_keel.json,30l,42,35110
+  1e-3,configs/llama_350M_32l_keel.json,32l,42,35111
 )

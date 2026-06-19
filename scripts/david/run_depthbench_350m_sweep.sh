@@ -10,6 +10,8 @@ LR="${1:?missing lr}"
 CFG="${2:?missing cfg path}"
 SEED="${3:?missing seed}"
 JOB_TAG="${4:-local}"
+MASTER_PORT="${5:-35100}"
+export MASTER_PORT
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
@@ -50,7 +52,6 @@ fi
 
 # Keep compatibility with original example script defaults.
 NPROC_PER_NODE="${NPROC_PER_NODE:-4}"
-MASTER_PORT="${MASTER_PORT:-35100}"
 MASTER_ADDR="${MASTER_ADDR:-localhost}"
 
 CFG_BASENAME="$(basename "$CFG" .json)"
@@ -75,7 +76,7 @@ torchrun \
   --seed="$SEED" \
   --max-steps=7600 \
   --global-train-batch-size=512 \
-  --device-train-microbatch-size=16 \
+  --device-train-microbatch-size=8 \
   --learning-rate="$LR" \
   --warmup-steps=760 \
   --eval-interval=400 \

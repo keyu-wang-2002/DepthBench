@@ -1,0 +1,26 @@
+universe   = vanilla
+executable = /bin/bash
+getenv     = True
+
+arguments  = ./scripts/david/run_zeroshot_eval.sh $(cfg_tag) $(ckpt_path) $(Cluster)_$(Process)
+
+request_cpus   = 4
+request_memory = 48GB
+request_gpus   = 1
+requirements   = regexp("H100", TARGET.CUDADeviceName) && !regexp("i203", TARGET.Machine)
+
+log    = condor_logs/zeroshot_$(cfg_tag)_$(Cluster)_$(Process).log
+output = condor_logs/zeroshot_$(cfg_tag)_$(Cluster)_$(Process).out
+error  = condor_logs/zeroshot_$(cfg_tag)_$(Cluster)_$(Process).err
+
+# Zero-shot eval for all 7 keel aspect-ratio variants at lr=2e-3, final step7600 checkpoint.
+
+queue cfg_tag, ckpt_path from (
+  16l, /fast/dmartinez/depthbench/runs/pretrain-llama_350M_16l_keel-lr2e-3-s42-17309939_0/step7600
+  20l, /fast/dmartinez/depthbench/runs/pretrain-llama_350M_20l_keel-lr2e-3-s42-17309939_1/step7600
+  24l, /fast/dmartinez/depthbench/runs/pretrain-llama_350M_24l_keel-lr2e-3-s42-17309939_2/step7600
+  26l, /fast/dmartinez/depthbench/runs/pretrain-llama_350M_26l_keel-lr2e-3-s42-17309939_3/step7600
+  28l, /fast/dmartinez/depthbench/runs/pretrain-llama_350M_28l_keel-lr2e-3-s42-17309953_0/step7600
+  30l, /fast/dmartinez/depthbench/runs/pretrain-llama_350M_30l_keel-lr2e-3-s42-17309953_1/step7600
+  32l, /fast/dmartinez/depthbench/runs/pretrain-llama_350M_32l_keel-lr2e-3-s42-17309954_0/step7600
+)
