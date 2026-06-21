@@ -1,0 +1,24 @@
+universe   = vanilla
+executable = /bin/bash
+getenv     = True
+
+arguments  = ./scripts/david/run_token_collapse.sh $(cfg_tag) $(ckpt_path) $(Cluster)_$(Process)
+
+request_cpus   = 4
+request_memory = 48GB
+request_gpus   = 1
+requirements   = regexp("H100", TARGET.CUDADeviceName) && !regexp("i203", TARGET.Machine)
+
+log    = condor_logs/token_collapse_$(cfg_tag)_$(Cluster)_$(Process).log
+output = condor_logs/token_collapse_$(cfg_tag)_$(Cluster)_$(Process).out
+error  = condor_logs/token_collapse_$(cfg_tag)_$(Cluster)_$(Process).err
+
+queue cfg_tag, ckpt_path from (
+  16l-lns-lr1e2, /fast/wangk/ckpt/depthbench/pretrain-llama-350M-L16-lns-lr1e-2/step7600
+  20l-lns-lr1e2, /fast/wangk/ckpt/depthbench/pretrain-llama-350M-L20-lns-lr1e-2/step7600
+  24l-lns-lr1e2, /fast/wangk/ckpt/depthbench/pretrain-llama-350M-L24-lns-lr1e-2/step7600
+  26l-lns-lr1e2, /fast/wangk/ckpt/depthbench/pretrain-llama-350M-L26-lns-lr1e-2/step7600
+  28l-lns-lr1e2, /fast/wangk/ckpt/depthbench/pretrain-llama-350M-L28-lns-lr1e-2/step7600
+  30l-lns-lr1e2, /fast/wangk/ckpt/depthbench/pretrain-llama-350M-L30-lns-lr1e-2/step7600
+  32l-lns-lr1e2, /fast/wangk/ckpt/depthbench/pretrain-llama-350M-L32-lns-lr1e-2/step7600
+)

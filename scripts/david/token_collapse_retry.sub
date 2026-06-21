@@ -1,0 +1,20 @@
+universe   = vanilla
+executable = /bin/bash
+getenv     = True
+
+arguments  = ./scripts/david/run_token_collapse.sh $(cfg_tag) $(ckpt_path) $(Cluster)_$(Process)
+request_cpus   = 4
+request_memory = 48GB
+request_gpus   = 1
+requirements   = regexp("H100", TARGET.CUDADeviceName) && !regexp("i203", TARGET.Machine)
+log    = condor_logs/token_collapse_$(cfg_tag)_$(Cluster)_$(Process).log
+output = condor_logs/token_collapse_$(cfg_tag)_$(Cluster)_$(Process).out
+error  = condor_logs/token_collapse_$(cfg_tag)_$(Cluster)_$(Process).err
+
+queue cfg_tag, ckpt_path from (
+  20l, /fast/dmartinez/depthbench/runs/pretrain-llama_350M_20l_keel-lr2e-3-s42-17309939_1/step7600
+  24l, /fast/dmartinez/depthbench/runs/pretrain-llama_350M_24l_keel-lr2e-3-s42-17309939_2/step7600
+  26l, /fast/dmartinez/depthbench/runs/pretrain-llama_350M_26l_keel-lr2e-3-s42-17309939_3/step7600
+  28l, /fast/dmartinez/depthbench/runs/pretrain-llama_350M_28l_keel-lr2e-3-s42-17309953_0/step7600
+  32l, /fast/dmartinez/depthbench/runs/pretrain-llama_350M_32l_keel-lr2e-3-s42-17309954_0/step7600
+)

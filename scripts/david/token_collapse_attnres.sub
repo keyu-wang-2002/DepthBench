@@ -1,0 +1,24 @@
+universe   = vanilla
+executable = /bin/bash
+getenv     = True
+
+arguments  = ./scripts/david/run_token_collapse.sh $(cfg_tag) $(ckpt_path) $(Cluster)_$(Process)
+
+request_cpus   = 4
+request_memory = 48GB
+request_gpus   = 1
+requirements   = regexp("H100", TARGET.CUDADeviceName) && !regexp("i203", TARGET.Machine)
+
+log    = condor_logs/token_collapse_$(cfg_tag)_$(Cluster)_$(Process).log
+output = condor_logs/token_collapse_$(cfg_tag)_$(Cluster)_$(Process).out
+error  = condor_logs/token_collapse_$(cfg_tag)_$(Cluster)_$(Process).err
+
+queue cfg_tag, ckpt_path from (
+  16l-attnres, /fast/wangk/ckpt/depthbench/pretrain-llama-350M-L16-attnres-lr2e-3/step7600
+  20l-attnres, /fast/wangk/ckpt/depthbench/pretrain-llama-350M-L20-attnres-lr2e-3/step7600
+  24l-attnres, /fast/wangk/ckpt/depthbench/pretrain-llama-350M-L24-attnres-lr2e-3/step7600
+  26l-attnres, /fast/wangk/ckpt/depthbench/pretrain-llama-350M-L26-attnres-lr2e-3/step7600
+  28l-attnres, /fast/wangk/ckpt/depthbench/pretrain-llama-350M-L28-attnres-lr2e-3/step7600
+  30l-attnres, /fast/wangk/ckpt/depthbench/pretrain-llama-350M-L30-attnres-lr2e-3/step7600
+  32l-attnres, /fast/wangk/ckpt/depthbench/pretrain-llama-350M-L32-attnres-lr2e-3/step7600
+)
