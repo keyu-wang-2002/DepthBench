@@ -213,7 +213,7 @@ def compute_jacobian_deviation_norms(
         )
         hidden_size = jacobian.shape[0]
         identity = torch.eye(hidden_size, dtype=jacobian.dtype)
-        norm = torch.norm(jacobian - identity, p="fro").item() / math.sqrt(hidden_size * hidden_size)
+        norm = torch.norm(jacobian - identity, p="fro").item() / math.sqrt(hidden_size)
         norms.append(float(norm))
 
     return norms
@@ -230,7 +230,7 @@ def plot_jacobian_norms(norms: List[float], output_path: Path):
     plt.figure(figsize=(9, 5.5))
     plt.plot(layers, plotted_norms, marker="o", linewidth=2, markersize=5)
     plt.xlabel("Layer Index", fontsize=13)
-    plt.ylabel(r"$\|J - I\|_F / d$", fontsize=13)
+    plt.ylabel(r"$\|J - I\|_F / \sqrt{d}$", fontsize=13)
     plt.title("Layer-wise Normalized Jacobian Deviation from Identity", fontsize=15)
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -321,7 +321,7 @@ def main():
         "num_layers": len(jacobian_norms),
         "num_samples": args.num_samples,
         "seq_length": args.seq_length,
-        "metric": "||J - I||_F / d",
+        "metric": "||J - I||_F / sqrt(d)",
         "plot_excludes_layer_0": len(jacobian_norms) > 1,
         "jacobian_norms": jacobian_norms,
     }
