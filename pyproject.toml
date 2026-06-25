@@ -1,0 +1,29 @@
+[project]
+name = "depthbench"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "torch==2.6.0",
+    "torchvision==0.21.0",
+    "torchaudio==2.6.0",
+    "ai2-olmo-core[wandb,transformers]",   # <- name from Step 2
+    "datasets",
+    "pyarrow",
+    "cached_path",
+    "transformers",
+    "numpy",
+    "tqdm",
+    "matplotlib",
+    "seaborn",
+]
+
+[tool.uv.sources]
+olmo-core = { path = "pretrain/OLMo-core", editable = true }
+torch = { index = "pytorch-cu118" }
+torchvision = { index = "pytorch-cu118" }
+torchaudio = { index = "pytorch-cu118" }
+
+[[tool.uv.index]]
+name = "pytorch-cu118"
+url = "https://download.pytorch.org/whl/cu118"
+explicit = true
