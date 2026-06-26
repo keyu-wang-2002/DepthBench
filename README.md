@@ -73,6 +73,35 @@ data/fineweb-edu/pre-tokenize/train/*.npy
 data/fineweb-edu/pre-tokenize/eval/*.npy
 ```
 
+Optionally, (pre-)tokenize once, and create reproducible splits using symlinks.
+```bash
+# change data path as per exact download made
+python data_utils/tokenize_from_pretrain_datasets.py \
+  --train-parquet-glob "data/fineweb-edu-350BT/sample/350BT/*.parquet" \
+  --output-dir "data/fineweb-edu-350BT/tokenized/" \
+  --text-field "text" \
+  --tokenizer-name-or-path "pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
+  --vocab-size 50280 \
+  --eos-token-id 50279 \
+  --pad-token-id 1 \
+  --batch-size 4096 \
+  --progress-log-interval-docs 8192 \
+  --write-doc-indices \
+  --skip-eval \
+  --skip-existing \
+  --skip-summary \
+  --train-worker-id ${i} \
+  --train-num-workers 32 
+
+# i is ideally the ID from the set of 32 jobs being run in parallel with these arguments
+
+python data_utils/split_tokenized_data.py \
+  --data-dir "data/fineweb-edu-350BT/tokenized/" \
+  --out-dir "data/fineweb-edu-350BT/tokenized_splits/" \
+  --n-val 3 \
+  --n-test 2
+```
+
 ## Model Config
 
 The following model configs are currently available under: [`./configs`](./configs)

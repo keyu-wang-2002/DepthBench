@@ -17,6 +17,7 @@ dependencies = [
     "seaborn",
     "huggingface-hub>=1.21.0",
     "hf-transfer>=0.1.9",
+    "ipython>=9.15.0",
 ]
 
 [tool.uv.sources]
