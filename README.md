@@ -26,6 +26,18 @@ python -m pip install -e .
 
 Download the FineWeb-Edu parquet shards: https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu/tree/main/sample/100BT
 
+
+```bash
+# optional download method 
+
+pip install huggingface_hub hf_transfer
+
+hf download HuggingFaceFW/fineweb-edu  \
+     --repo-type dataset \
+     --include "sample/100BT/*" \
+     --local-dir ./data/100BT
+```
+
 split evaluation data:
 ```bash
 mv data/100BT/013_00008.parquet data/eval/eval_013_00008.parquet
