@@ -1,0 +1,35 @@
+{
+    "architectures": [
+        "LLaMAForCausalLM"
+    ],
+    "attention_bias": false,
+    "block_type": "post_norm_moda",
+    "bos_token_id": null,
+    "eos_token_id": 50279,
+    "hidden_act": "silu",
+    "hidden_size": 1024,
+    "intermediate_size": 2736,
+    "initializer_range": 0.02,
+    "max_sequence_length": 2048,
+    "model_type": "llama",
+    "moda": {
+        "backend": "v17",
+        "cache_post_norm_k": true,
+        "extra_ffn_kv_proj": true,
+        "extra_attn_kv_proj": false,
+        "depth_bs": 64,
+        "depth_warps": 4,
+        "attention_scale": null
+    },
+    "num_attention_heads": 16,
+    "num_hidden_layers": 24,
+    "num_key_value_heads": 16,
+    "pad_token_id": 1,
+    "rope_theta": 10000,
+    "rms_norm_eps": 1e-06,
+    "tie_word_embeddings": false,
+    "torch_dtype": "bfloat16",
+    "transformers_version": "4.28.1",
+    "use_cache": true,
+    "vocab_size": 50280
+}

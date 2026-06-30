@@ -1,0 +1,20 @@
+request_memory = 80000
+request_cpus = 16
+request_gpus = 4
+requirements = ((TARGET.CUDADeviceName == "NVIDIA H100") || (TARGET.CUDADeviceName == "NVIDIA H100 80GB HBM3")) && (TARGET.CUDAGlobalMemoryMb > 70000) && (TARGET.CUDACapability >= 9.0) && (TARGET.Machine != "i107.internal.cluster.is.localnet")
+
+executable = /lustre/fast/fast/wliu/yy/DepthBench_workspace/DepthBench/scripts/run_moda_350m_l24_4gpu_h100.sh
+environment = "METHOD=$(METHOD) LR_TAG=$(LR_TAG) RUN_NAME=$(RUN_NAME) LEARNING_RATE=$(LR) NPROC_PER_NODE=4 DEVICE_TRAIN_MICROBATCH_SIZE=2 MASTER_PORT=$(PORT)"
+
+output = /lustre/fast/fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor/$(RUN_NAME).out
+error = /lustre/fast/fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor/$(RUN_NAME).err
+log = /lustre/fast/fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor/$(RUN_NAME).log
+
+queue METHOD, LR_TAG, LR, RUN_NAME, PORT from (
+prenorm_moda lr2e3 2e-3 pretrain-llama-350M-prenorm-moda-l24-lr2e3 35110
+prenorm_moda lr1e3 1e-3 pretrain-llama-350M-prenorm-moda-l24-lr1e3 35111
+postnorm_baseline lr2e3 2e-3 pretrain-llama-350M-postnorm-baseline-l24-lr2e3 35112
+postnorm_baseline lr1e3 1e-3 pretrain-llama-350M-postnorm-baseline-l24-lr1e3 35113
+postnorm_moda lr2e3 2e-3 pretrain-llama-350M-postnorm-moda-l24-lr2e3 35114
+postnorm_moda lr1e3 1e-3 pretrain-llama-350M-postnorm-moda-l24-lr1e3 35115
+)

@@ -1,0 +1,16 @@
+universe = vanilla
+initialdir = /lustre/fast/fast/wliu/yy/DepthBench_workspace/DepthBench
+executable = /lustre/fast/fast/wliu/yy/DepthBench_workspace/DepthBench/scripts/run_moda_350m_l24_4gpu_h100.sh
+
+request_cpus = 16
+request_memory = 160000
+request_gpus = 8
+requirements = (TARGET.CUDAGlobalMemoryMb >= 80000) && (TARGET.CUDACapability >= 8.0) && (TARGET.CUDADeviceName == "NVIDIA A100-SXM4-80GB")
+
+environment = "METHOD=prenorm_moda LR_TAG=lr2e3 RUN_NAME=pretrain-llama-350M-prenorm-moda-l24-lr2e3 LEARNING_RATE=2e-3 NPROC_PER_NODE=8 DEVICE_TRAIN_MICROBATCH_SIZE=2 GLOBAL_TRAIN_BATCH_SIZE=512 MASTER_PORT=36133 SWANLAB_TAGS=350M_L24_prenorm_moda_lr2e3_resume_a100_8gpu_fineweb-edu-100bt"
+
+output = /lustre/fast/fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor/pretrain-llama-350M-prenorm-moda-l24-lr2e3-resume-a100-8gpu.out
+error = /lustre/fast/fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor/pretrain-llama-350M-prenorm-moda-l24-lr2e3-resume-a100-8gpu.err
+log = /lustre/fast/fast/wliu/yy/DepthBench_workspace/DepthBench/logs/condor/pretrain-llama-350M-prenorm-moda-l24-lr2e3-resume-a100-8gpu.log
+
+queue 1

@@ -39,6 +39,7 @@ from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
 from olmo_core.nn.rope import RoPEConfig
 from olmo_core.nn.transformer import (
     HyperConnectionsConfig,
+    MoDAConfig,
     MoEHybridTransformerBlockBase,
     MoEReorderedNormTransformerBlock,
     MoETransformer,
@@ -70,6 +71,12 @@ def requires_liger_mhc_runtime():
     triton = pytest.importorskip("triton")
     if Version(triton.__version__) < Version("3.4.0"):
         pytest.skip("Liger mHC tmax=20 requires triton>=3.4")
+
+
+def requires_moda_runtime():
+    pytest.importorskip("fla.ops.moda")
+    if not torch.cuda.is_available():
+        pytest.skip("MoDA Triton kernels require CUDA")
 
 
 @pytest.mark.parametrize(
@@ -239,6 +246,65 @@ def test_tiny_llama_builder_with_liger_mhc_forward_backward():
 
     output.loss.backward()
     assert torch.isfinite(output.loss)
+
+
+@pytest.mark.parametrize("block_name", ["post_norm", "moda", "post_norm_moda"])
+def test_tiny_llama_builder_with_moda_block_types_construct(block_name: str):
+    config = TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=256,
+        n_layers=2,
+        n_heads=4,
+        n_kv_heads=4,
+        fused_ops=False,
+        dtype=DType.float32,
+        block_name=TransformerBlockType(block_name),
+        moda=MoDAConfig() if "moda" in block_name else None,
+    )
+
+    model = config.build(init_device="cpu")
+
+    assert config.num_params == model.num_params
+    assert type(model.blocks["0"]).__name__ in {
+        "PostNormTransformerBlock",
+        "MoDATransformerBlock",
+        "PostNormMoDATransformerBlock",
+    }
+
+
+@pytest.mark.parametrize("block_name", ["moda", "post_norm_moda"])
+def test_tiny_moda_forward_backward_cuda(block_name: str):
+    requires_moda_runtime()
+
+    device = torch.device("cuda")
+    config = TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=256,
+        n_layers=2,
+        n_heads=4,
+        n_kv_heads=4,
+        fused_ops=False,
+        dtype=DType.bfloat16,
+        block_name=TransformerBlockType(block_name),
+        moda=MoDAConfig(backend="v17", cache_post_norm_k=True),
+    )
+
+    model = config.build(init_device="cuda")
+    model.init_weights(device=device, max_seq_len=16)
+    input_ids = torch.randint(0, config.vocab_size, (2, 16), device=device)
+
+    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        output = model(input_ids=input_ids, labels=input_ids)
+
+    output.loss.backward()
+    assert torch.isfinite(output.loss)
+    moda_grads = [
+        param.grad
+        for name, param in model.named_parameters()
+        if "kv_proj" in name and param.requires_grad
+    ]
+    assert moda_grads
+    assert all(grad is not None and torch.isfinite(grad).all() for grad in moda_grads)
 
 
 def run_ngpt_with_fsdp2():

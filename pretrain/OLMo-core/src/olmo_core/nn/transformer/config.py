@@ -1,7 +1,7 @@
 import logging
 import math
 from collections.abc import Callable
-from dataclasses import InitVar, dataclass, field
+from dataclasses import InitVar, dataclass, field, replace
 from fnmatch import fnmatch
 from itertools import cycle, islice
 from typing import TYPE_CHECKING, Dict, List, Optional, cast
@@ -103,6 +103,21 @@ class TransformerBlockType(StrEnum):
     default = "default"
     """
     ➡️ :class:`TransformerBlock`
+    """
+
+    post_norm = "post_norm"
+    """
+    ➡️ :class:`PostNormTransformerBlock`
+    """
+
+    moda = "moda"
+    """
+    ➡️ :class:`MoDATransformerBlock` (pre-norm MoDA)
+    """
+
+    post_norm_moda = "post_norm_moda"
+    """
+    ➡️ :class:`PostNormMoDATransformerBlock`
     """
 
     default_scaled = "default_scaled"
@@ -262,6 +277,39 @@ class HyperConnectionsConfig(Config):
 
 
 @dataclass
+class MoDAConfig(Config):
+    """
+    Configuration for Mixture-of-Depths Attention blocks.
+
+    MoDA stores depth K/V memories across layers and mixes them with the current
+    sequence K/V inside attention. This config is intentionally separate from
+    hyper-connections because it changes the attention path rather than the
+    residual-stream path.
+    """
+
+    backend: str = "v17"
+    cache_post_norm_k: bool = True
+    extra_ffn_kv_proj: bool = True
+    extra_attn_kv_proj: bool = False
+    depth_bs: int = 64
+    depth_warps: int = 4
+    attention_scale: Optional[float] = None
+
+    def __post_init__(self):
+        if self.backend not in {"v14", "v17"}:
+            raise OLMoConfigurationError("'backend' for MoDA must be one of: v14, v17")
+        if self.extra_attn_kv_proj:
+            raise OLMoConfigurationError(
+                "MoDA extra_attn_kv_proj is not implemented; use the paper-default "
+                "attention K/V reuse path instead"
+            )
+        if self.depth_bs <= 0:
+            raise OLMoConfigurationError("'depth_bs' for MoDA must be positive")
+        if self.depth_warps <= 0:
+            raise OLMoConfigurationError("'depth_warps' for MoDA must be positive")
+
+
+@dataclass
 class TransformerBlockConfig(ModuleConfig):
     """
     A configuration class for easily building transformer blocks.
@@ -309,6 +357,14 @@ class TransformerBlockConfig(ModuleConfig):
     """
     Optional HC / mHC residual backend. Currently supported for the default pre-norm block only.
     """
+    moda: Optional[MoDAConfig] = None
+    """
+    Optional MoDA depth-attention backend. Supported for ``moda`` and ``post_norm_moda`` blocks.
+    """
+    moda_skip_ffn_kv: bool = False
+    """
+    Internal override used for the last MoDA block, where the FFN K/V projection is never read.
+    """
 
     def __post_init__(self, attention: Optional[AttentionConfig] = None):
         # Handle backwards compatibility: old configs used `attention` instead of `sequence_mixer`.
@@ -339,14 +395,20 @@ class TransformerBlockConfig(ModuleConfig):
             MoEHybridTransformerBlock,
             MoEReorderedNormTransformerBlock,
             MoETransformerBlock,
+            MoDATransformerBlock,
             NormalizedTransformerBlock,
             PeriNormTransformerBlock,
+            PostNormMoDATransformerBlock,
+            PostNormTransformerBlock,
             ReorderedNormTransformerBlock,
             TransformerBlock,
         )
 
+        block_name = self.name
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
+        moda = kwargs.pop("moda", None)
+        moda_skip_ffn_kv = kwargs.pop("moda_skip_ffn_kv", False)
         kwargs.update(
             d_model=d_model,
             block_idx=block_idx,
@@ -356,29 +418,43 @@ class TransformerBlockConfig(ModuleConfig):
         )
 
         try:
-            if self.name == TransformerBlockType.default:
+            if block_name == TransformerBlockType.default:
                 return TransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.default_scaled:
+            elif block_name == TransformerBlockType.post_norm:
+                return PostNormTransformerBlock(**kwargs)
+            elif block_name == TransformerBlockType.moda:
+                return MoDATransformerBlock(
+                    **kwargs,
+                    moda=MoDAConfig() if moda is None else moda,
+                    skip_ffn_kv=moda_skip_ffn_kv,
+                )
+            elif block_name == TransformerBlockType.post_norm_moda:
+                return PostNormMoDATransformerBlock(
+                    **kwargs,
+                    moda=MoDAConfig() if moda is None else moda,
+                    skip_ffn_kv=moda_skip_ffn_kv,
+                )
+            elif block_name == TransformerBlockType.default_scaled:
                 return LayerNormScaledTransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.reordered_norm:
+            elif block_name == TransformerBlockType.reordered_norm:
                 return ReorderedNormTransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.peri_norm:
+            elif block_name == TransformerBlockType.peri_norm:
                 return PeriNormTransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.normalized:
+            elif block_name == TransformerBlockType.normalized:
                 return NormalizedTransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.moe:
+            elif block_name == TransformerBlockType.moe:
                 return MoETransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.moe_reordered_norm:
+            elif block_name == TransformerBlockType.moe_reordered_norm:
                 return MoEReorderedNormTransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.moe_hybrid:
+            elif block_name == TransformerBlockType.moe_hybrid:
                 return MoEHybridTransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.moe_hybrid_reordered_norm:
+            elif block_name == TransformerBlockType.moe_hybrid_reordered_norm:
                 return MoEHybridReorderedNormTransformerBlock(**kwargs)
             else:
-                raise NotImplementedError(self.name)
+                raise NotImplementedError(block_name)
         except TypeError as e:
             raise OLMoConfigurationError(
-                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+                f"invalid options for '{block_name}' {self.__class__.__name__}, {e}"
             ) from e
 
     def num_params(self, d_model: int) -> int:
@@ -401,6 +477,19 @@ class TransformerBlockConfig(ModuleConfig):
             block_params += self.feed_forward.num_params(d_model)
             if self.layer_norm is not None:
                 block_params += self.layer_norm.num_params(d_model)
+            if (
+                self.name in (TransformerBlockType.moda, TransformerBlockType.post_norm_moda)
+                and (self.moda or MoDAConfig()).extra_ffn_kv_proj
+                and not self.moda_skip_ffn_kv
+            ):
+                sequence_mixer = cast(AttentionConfig, self.sequence_mixer)
+                n_heads = sequence_mixer.n_heads
+                n_kv_heads = sequence_mixer.n_kv_heads or n_heads
+                head_dim = sequence_mixer.head_dim or d_model // n_heads
+                bias = sequence_mixer.bias if sequence_mixer.bias is not None else False
+                block_params += 2 * d_model * n_kv_heads * head_dim
+                if bias:
+                    block_params += 2 * n_kv_heads * head_dim
         if self.feed_forward_moe is not None:
             block_params += self.feed_forward_moe.num_params(d_model)
             if self.layer_norm is not None:
@@ -1589,6 +1678,7 @@ class TransformerConfig(ModelConfig):
         sliding_window: Optional[SlidingWindowAttentionConfig] = None,
         block_name: TransformerBlockType = TransformerBlockType.default,
         hyper_connections: Optional[HyperConnectionsConfig] = None,
+        moda: Optional[MoDAConfig] = None,
         block_mods: Optional[
             Dict[int, Callable[[TransformerBlockConfig], TransformerBlockConfig]]
         ] = None,
@@ -1660,7 +1750,37 @@ class TransformerConfig(ModelConfig):
             feed_forward_moe=feed_forward_moe,
             layer_norm=layer_norm,
             hyper_connections=hyper_connections,
+            moda=(
+                MoDAConfig()
+                if moda is None
+                and block_name in (TransformerBlockType.moda, TransformerBlockType.post_norm_moda)
+                else moda
+            ),
         )
+
+        if block_name in (TransformerBlockType.moda, TransformerBlockType.post_norm_moda):
+            if hyper_connections is not None:
+                raise OLMoConfigurationError("MoDA blocks cannot also enable hyper_connections")
+            if block.feed_forward_moe is not None:
+                raise OLMoConfigurationError("MoDA blocks only support dense feed-forward layers")
+            moda_config = block.moda or MoDAConfig()
+            if moda_config.extra_ffn_kv_proj:
+                user_block_mods = dict(block_mods or {})
+                last_idx = n_layers - 1
+                existing_mod = user_block_mods.get(last_idx)
+
+                def mark_last_moda_block(
+                    block_config: TransformerBlockConfig,
+                    existing_mod: Optional[
+                        Callable[[TransformerBlockConfig], TransformerBlockConfig]
+                    ] = existing_mod,
+                ) -> TransformerBlockConfig:
+                    if existing_mod is not None:
+                        block_config = existing_mod(block_config)
+                    return replace(block_config, moda_skip_ffn_kv=True)
+
+                user_block_mods[last_idx] = mark_last_moda_block
+                block_mods = user_block_mods
 
         if block_mods and kwargs.get("block_overrides"):
             raise OLMoConfigurationError(

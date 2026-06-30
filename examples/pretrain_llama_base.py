@@ -24,6 +24,7 @@ from olmo_core.distributed.utils import get_rank
 from olmo_core.nn.feed_forward import ActivationFunction, FeedForwardConfig, FeedForwardType
 from olmo_core.nn.transformer import (
     HyperConnectionsConfig,
+    MoDAConfig,
     TransformerBlockType,
     TransformerConfig,
 )
@@ -207,6 +208,8 @@ def _load_llama_like_kwargs(config_path: str, default_vocab_size: int) -> tuple[
     model_kwargs["vocab_size"] = model_kwargs.get("vocab_size", default_vocab_size)
     if "block_name" in model_kwargs:
         model_kwargs["block_name"] = resolve_block_name(model_kwargs["block_name"])
+    elif raw_config.get("block_type") is not None:
+        model_kwargs["block_name"] = resolve_block_name(raw_config["block_type"])
 
     feed_forward = build_feed_forward_config(raw_config, model_kwargs["dtype"])
     if feed_forward is not None:
@@ -217,6 +220,12 @@ def _load_llama_like_kwargs(config_path: str, default_vocab_size: int) -> tuple[
         if not isinstance(hyper_connections, dict):
             raise TypeError("'hyper_connections' in model config must be a JSON object")
         model_kwargs["hyper_connections"] = HyperConnectionsConfig.from_dict(hyper_connections)
+
+    moda = raw_config.get("moda")
+    if moda is not None:
+        if not isinstance(moda, dict):
+            raise TypeError("'moda' in model config must be a JSON object")
+        model_kwargs["moda"] = MoDAConfig.from_dict(moda)
 
     required_keys = ("d_model", "n_layers", "n_heads", "vocab_size")
     missing_keys = [key for key in required_keys if model_kwargs.get(key) is None]

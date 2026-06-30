@@ -4,7 +4,9 @@ from cached_path import cached_path
 
 from olmo_core.nn.transformer.config import (
     HyperConnectionsConfig,
+    MoDAConfig,
     TransformerBlockConfig,
+    TransformerBlockType,
     TransformerConfig,
 )
 
@@ -58,6 +60,28 @@ def test_roundtrip_with_liger_mhc_hyper_connections():
             liger_phi_dtype="bfloat16",
             liger_allow_fp32=False,
             collapse="auto",
+        ),
+    )
+
+    roundtripped = TransformerConfig.from_dict(config.as_config_dict())
+
+    assert roundtripped.as_config_dict() == config.as_config_dict()
+
+
+def test_roundtrip_with_moda_block_config():
+    config = TransformerConfig.llama_like(
+        d_model=128,
+        vocab_size=32000,
+        n_layers=2,
+        n_heads=8,
+        n_kv_heads=8,
+        block_name=TransformerBlockType.post_norm_moda,
+        moda=MoDAConfig(
+            backend="v17",
+            cache_post_norm_k=True,
+            extra_ffn_kv_proj=True,
+            depth_bs=64,
+            depth_warps=4,
         ),
     )
 
