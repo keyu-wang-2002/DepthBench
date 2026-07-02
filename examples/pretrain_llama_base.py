@@ -6,12 +6,13 @@ import argparse
 import logging
 import sys
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import List, Optional, cast
 
 import rich
 
-DEPTHBENCH_ROOT = Path(__file__).resolve().parents[1]
+DEPTHBENCH_ROOT = Path(__file__).absolute().parent.parent  # resolve().parents[1]
 OLMO_CORE_SRC = DEPTHBENCH_ROOT / "pretrain" / "OLMo-core" / "src"
 for path in (DEPTHBENCH_ROOT, OLMO_CORE_SRC):
     if str(path) not in sys.path:
@@ -52,14 +53,19 @@ from olmo_core.utils import seed_all
 
 log = logging.getLogger(__name__)
 
-PRETOKENIZED_DATA_ROOT = "data/fineweb-edu/pre-tokenize"
-PROJECT_CODE_ROOT = "DepthBench"
-TRAIN_DATA_GLOB = f"{PRETOKENIZED_DATA_ROOT}/train/*.npy"
-EVAL_DATA_GLOB = f"{PRETOKENIZED_DATA_ROOT}/eval/*.npy"
-TOKENIZER_PATH = f"{PROJECT_CODE_ROOT}/pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json"
+
+WSPACE = Path(os.getenv("WSPACE", "."))
+
+PRETOKENIZED_DATA_ROOT = WSPACE / "data" / "fineweb-edu" / "pre-tokenize"
+PROJECT_CODE_ROOT = DEPTHBENCH_ROOT  # LSPACE / "DepthBench"
+TRAIN_DATA_GLOB = f"{str(PRETOKENIZED_DATA_ROOT)}/train/*.npy"
+EVAL_DATA_GLOB = f"{str(PRETOKENIZED_DATA_ROOT)}/eval/*.npy"
+TOKENIZER_PATH = f"{str(PROJECT_CODE_ROOT)}/pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json"
 DEFAULT_MODEL_CONFIG_PATH = (
-    f"{PROJECT_CODE_ROOT}/configs/llama_60M_backbone.json"
+    f"{str(PROJECT_CODE_ROOT)}/configs/llama_60M_backbone.json"
 )
+
+
 @dataclass
 class ExperimentConfig(Config):
     model: TransformerConfig

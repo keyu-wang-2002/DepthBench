@@ -18,6 +18,8 @@ dependencies = [
     "huggingface-hub>=1.21.0",
     "hf-transfer>=0.1.9",
     "ipython>=9.15.0",
+    "dataclass-extensions>=0.5.0",
+    "flash-linear-attention>=0.5.1",
 ]
 
 [tool.uv.sources]
