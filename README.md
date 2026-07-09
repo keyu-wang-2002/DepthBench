@@ -11,12 +11,12 @@ source depthbench/bin/activate
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu118
 
-cd DepthBench/pretrain/OLMo-core
+cd pretrain/OLMo-core
 python -m pip install -e ".[wandb,transformers]"
 python -m pip install datasets pyarrow cached_path
 pip install torch transformers numpy tqdm matplotlib seaborn
 
-cd DepthBench/eval/lm-evaluation-harness
+cd eval/lm-evaluation-harness
 python -m pip install -e .
 ```
 
@@ -71,22 +71,19 @@ The following model configs are currently available under: [`./configs`](./confi
 | 350M | 1024 | 2736 | 16 | 24 | 8B | 512 | 2048 | 7.6k |
 | 1B | 2048 | 5461 | 32 | 24 | 21B | 512 | 2048 | 20k |
 
-### 350M Aspect-Ratio Variants
+### 350M Aspect-Ratio Variants (names in config will be modified to 400M)
 
-The following 350M-family configs keep `#heads = 16` fixed while varying `d_model` and `n_layer` (Aspect Ratio `d_model / n_layer`) to probe depth/width scaling at roughly the same parameter budget. `Standard-350M` is kept as the original backbone anchor, while the other variants use even `head_dim` values that are safe for the current pre-training codepath and satisfy `hidden_size = head_dim * heads` and `intermediate_size = 8/3 * hidden_size` exactly.
+| Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Backbone Diff | Total Size | Total Diff |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 1216 | 3248 | 16 | 76 | 76.00 | 284M | -6.01% | 407M | +0.28% |
+| 20 | 1120 | 2992 | 16 | 70 | 56.00 | 301M | -0.32% | 414M | +2.14% |
+| 24 | 1024 | 2736 | 16 | 64 | 42.67 | 302M | 0.00% | 405M | 0.00% |
+| 26 | 992 | 2656 | 16 | 62 | 38.15 | 308M | +1.81% | 408M | +0.56% |
+| 28 | 960 | 2560 | 16 | 60 | 34.29 | 310M | +2.41% | 406M | +0.21% |
+| 30 | 928 | 2480 | 16 | 58 | 30.93 | 311M | +2.68% | 404M | -0.38% |
+| 32 | 896 | 2400 | 16 | 56 | 28.00 | 309M | +2.26% | 399M | -1.49% |
 
-| Tier | Hidden | Intermediate | Heads | Layers | Head Dim | Aspect Ratio |
-|---|---:|---:|---:|---:|---:|---:|
-| Ultra shallow-350M | 2208 | 5888 | 16 | 4 | 138 | 552.00 |
-| Very shallow-350M | 1632 | 4352 | 16 | 8 | 102 | 204.00 |
-| Shallow-350M | 1248 | 3328 | 16 | 16 | 78 | 78.00 |
-| Standard-350M | 1024 | 2736 | 16 | 24 | 64 | 42.67 |
-| Deeper-350M | 864 | 2304 | 16 | 35 | 54 | 24.69 |
-| Deep-350M | 768 | 2048 | 16 | 45 | 48 | 17.07 |
-| Very deep-350M | 672 | 1792 | 16 | 59 | 42 | 11.39 |
-| Extreme deep-350M | 480 | 1280 | 16 | 120 | 30 | 4.00 |
 
-We follow https://arxiv.org/pdf/2001.08361, excluding embedding parameters when fixing/counting model size. That is, in above table, non-embedding parameters are fixed about 350M, but total parameters can vary from 380M (deepest) to 450M (shallowest).
 
 ## Training Script
 

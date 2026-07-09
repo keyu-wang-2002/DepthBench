@@ -92,11 +92,17 @@ def _load_hf_tokenizer(
 
 
 def _infer_model_max_length(
+    checkpoint_dir: str | Path,
     tokenizer: PreTrainedTokenizerBase,
     override: Optional[int] = None,
 ) -> Optional[int]:
     if override is not None:
         return override
+
+    config_dict = _load_checkpoint_config(checkpoint_dir)
+    max_sequence_length = config_dict.get("train_module", {}).get("max_sequence_length")
+    if isinstance(max_sequence_length, int) and max_sequence_length > 0:
+        return max_sequence_length
 
     model_max_length = getattr(tokenizer, "model_max_length", None)
     if model_max_length is None:
@@ -156,7 +162,11 @@ class OLMoNativeLM:
             **generation_kwargs,
         )
 
-        model_max_length = _infer_model_max_length(tokenizer, override=max_length)
+        model_max_length = _infer_model_max_length(
+            checkpoint_dir,
+            tokenizer,
+            override=max_length,
+        )
 
         class _OLMoNativeTemplateLM(TemplateLM):
             backend = "causal"
@@ -389,40 +399,79 @@ class OLMoNativeLM:
             ) -> list[str]:
                 del disable_tqdm
 
-                outputs: list[str] = []
                 pad_token_id = self.tokenizer.pad_token_id
                 if pad_token_id is None:
                     pad_token_id = self.eot_token_id
 
-                for context, gen_kwargs in [req.args for req in requests]:
+                prepared: list[dict[str, Any]] = []
+                for index, (context, gen_kwargs) in enumerate(req.args for req in requests):
                     encoded = self.tok_encode(context, add_special_tokens=False)
                     if not encoded:
                         encoded = [self.prefix_token_id]
 
-                    input_ids = torch.tensor(
-                        [encoded],
-                        dtype=torch.long,
-                        device=self.generation_module.device,
-                    )
                     max_gen_toks = int(gen_kwargs.get("max_gen_toks", self.max_gen_toks))
-                    generated_ids, _, _ = self.generation_module.generate_batch(
-                        input_ids,
-                        do_sample=False,
-                        max_new_tokens=max_gen_toks,
-                        pad_token_id=pad_token_id,
-                        eos_token_id=self.eot_token_id,
-                        use_cache=False,
-                        completions_only=True,
-                    )
-                    text = self.tok_decode(generated_ids[0].tolist())
+                    if self.max_length is not None:
+                        max_context_len = self.max_length - max_gen_toks
+                        if max_context_len <= 0:
+                            raise ValueError(
+                                "max_gen_toks must be smaller than the model context window."
+                            )
+                        encoded = encoded[-max_context_len:]
+
                     stop_sequences = gen_kwargs.get("until", []) or []
                     if isinstance(stop_sequences, str):
                         stop_sequences = [stop_sequences]
-                    for stop_str in stop_sequences:
-                        if stop_str and stop_str in text:
-                            text = text.split(stop_str)[0]
-                            break
-                    outputs.append(text)
+                    prepared.append(
+                        {
+                            "index": index,
+                            "encoded": encoded,
+                            "max_gen_toks": max_gen_toks,
+                            "stop_sequences": stop_sequences,
+                        }
+                    )
+
+                outputs = [""] * len(prepared)
+                # TorchAttentionBackend does not support KV caching or padded prompt
+                # masks, so only prompts with identical lengths can share a batch.
+                group_keys = sorted(
+                    {
+                        (item["max_gen_toks"], len(item["encoded"]))
+                        for item in prepared
+                    }
+                )
+                for max_gen_toks, prompt_len in group_keys:
+                    group = [
+                        item
+                        for item in prepared
+                        if item["max_gen_toks"] == max_gen_toks
+                        and len(item["encoded"]) == prompt_len
+                    ]
+                    for batch_start in range(0, len(group), self.batch_size):
+                        batch = group[batch_start : batch_start + self.batch_size]
+                        model_device = self.generation_module.device
+                        input_ids = torch.tensor(
+                            [item["encoded"] for item in batch],
+                            dtype=torch.long,
+                            device=model_device,
+                        )
+
+                        generated_ids, _, _ = self.generation_module.generate_batch(
+                            input_ids,
+                            do_sample=False,
+                            max_new_tokens=max_gen_toks,
+                            pad_token_id=pad_token_id,
+                            eos_token_id=self.eot_token_id,
+                            use_cache=False,
+                            completions_only=True,
+                            log_timing=False,
+                        )
+                        for row, item in enumerate(batch):
+                            text = self.tok_decode(generated_ids[row].tolist())
+                            for stop_str in item["stop_sequences"]:
+                                if stop_str and stop_str in text:
+                                    text = text.split(stop_str)[0]
+                                    break
+                            outputs[item["index"]] = text
 
                 return outputs
 

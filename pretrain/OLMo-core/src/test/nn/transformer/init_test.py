@@ -23,6 +23,54 @@ from olmo_core.nn.transformer import (
 from olmo_core.nn.transformer.init import InitMethod
 
 
+def test_gpt2_init_scales_only_residual_output_projections():
+    """GPT-2 init scales attention output and FFN down projections only."""
+    d_model = 512
+    hidden_size = d_model * 4
+    n_layers = 4
+    init_std = 0.02
+
+    config = TransformerConfig.llama_like(
+        d_model=d_model,
+        vocab_size=1000,
+        n_layers=n_layers,
+        n_heads=d_model // 64,
+        feed_forward=FeedForwardConfig(hidden_size=hidden_size, bias=False),
+        init_method=InitMethod.gpt2,
+        init_std=init_std,
+    )
+    model = config.build(init_device="cpu")
+    model.init_weights(device=torch.device("cpu"))
+
+    block = model.blocks["0"]
+    expected_std = init_std
+    expected_scaled_std = init_std / math.sqrt(2 * n_layers)
+    tol = expected_std * 0.2
+    scaled_tol = expected_scaled_std * 0.2
+
+    for name in ("w_q", "w_k", "w_v"):
+        actual = getattr(block.attention, name).weight.std().item()
+        assert (
+            abs(actual - expected_std) < tol
+        ), f"attention.{name} std: expected ~{expected_std:.5f}, got {actual:.5f}"
+
+    attn_out_std = block.attention.w_out.weight.std().item()
+    assert (
+        abs(attn_out_std - expected_scaled_std) < scaled_tol
+    ), f"attention.w_out std: expected ~{expected_scaled_std:.5f}, got {attn_out_std:.5f}"
+
+    for name in ("w1", "w3"):
+        actual = getattr(block.feed_forward, name).weight.std().item()
+        assert (
+            abs(actual - expected_std) < tol
+        ), f"feed_forward.{name} std: expected ~{expected_std:.5f}, got {actual:.5f}"
+
+    ffn_down_std = block.feed_forward.w2.weight.std().item()
+    assert (
+        abs(ffn_down_std - expected_scaled_std) < scaled_tol
+    ), f"feed_forward.w2 std: expected ~{expected_scaled_std:.5f}, got {ffn_down_std:.5f}"
+
+
 @pytest.mark.parametrize("d_model", [256, 512])
 @pytest.mark.parametrize(
     "init_device, device",

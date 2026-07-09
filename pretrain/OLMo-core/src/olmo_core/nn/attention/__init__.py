@@ -714,6 +714,19 @@ class Attention(SequenceMixer):
     ) -> None:
         from olmo_core.nn.transformer.init import InitMethod, init_linear
 
+        if init_method == InitMethod.deepnorm:
+            beta = (8 * num_blocks) ** -0.25
+            for linear, std_scale in (
+                (self.w_q, 1.0),
+                (self.w_k, 1.0),
+                (self.w_v, beta),
+                (self.w_out, beta),
+            ):
+                init_linear(linear, std=std * std_scale, generator=generator)
+            if self.w_g is not None:
+                init_linear(self.w_g, std=std, generator=generator)
+            return
+
         # Compute std for Q/K/V initialization
         if init_method == InitMethod.fan_in:
             # For fan_in, use 1/√d_in based on actual weight shape (ignores base std parameter)
@@ -739,7 +752,7 @@ class Attention(SequenceMixer):
         # Compute std for w_out initialization
         if init_method == InitMethod.fan_in:
             std = self.w_out.in_features**-0.5
-        elif init_method == InitMethod.llama:
+        elif init_method in (InitMethod.gpt2, InitMethod.llama):
             std = std / (2 * num_blocks) ** 0.5
         elif init_method == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
@@ -1121,7 +1134,7 @@ class FusedAttention(SequenceMixer):
         # Compute std for w_out initialization
         if init_method == InitMethod.fan_in:
             std = self.w_out.in_features**-0.5
-        elif init_method == InitMethod.llama:
+        elif init_method in (InitMethod.gpt2, InitMethod.llama):
             std = std / (2 * num_blocks) ** 0.5
         elif init_method == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5

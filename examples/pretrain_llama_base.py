@@ -39,6 +39,7 @@ from olmo_core.train import (
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     ConfigSaverCallback,
+    GAPMonitorCallback,
     GPUMemoryMonitorCallback,
     LayerStatsMonitorCallback,
     LMEvaluatorCallbackConfig,
@@ -53,12 +54,11 @@ from olmo_core.utils import seed_all
 log = logging.getLogger(__name__)
 
 PRETOKENIZED_DATA_ROOT = "data/fineweb-edu/pre-tokenize"
-PROJECT_CODE_ROOT = "DepthBench"
 TRAIN_DATA_GLOB = f"{PRETOKENIZED_DATA_ROOT}/train/*.npy"
 EVAL_DATA_GLOB = f"{PRETOKENIZED_DATA_ROOT}/eval/*.npy"
-TOKENIZER_PATH = f"{PROJECT_CODE_ROOT}/pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json"
+TOKENIZER_PATH = "pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json"
 DEFAULT_MODEL_CONFIG_PATH = (
-    f"{PROJECT_CODE_ROOT}/configs/llama_60M_backbone.json"
+    "configs/llama_400m_L24.json"
 )
 @dataclass
 class ExperimentConfig(Config):
@@ -116,7 +116,7 @@ def build_config(args: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             alpha_f=0.1,
             warmup_min_lr=0.0,
         ),
-        max_grad_norm=1.0,
+        max_grad_norm=None if args.max_grad_norm <= 0 else args.max_grad_norm,
         compile_model=False,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.ddp,
@@ -183,6 +183,21 @@ def build_config(args: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         )
     )
 
+    #if args.enable_gap_monitor:
+    #    trainer_config = trainer_config.with_callback(
+    #        "gap_monitor",
+    #        GAPMonitorCallback(
+    #            enabled=True,
+    #            monitor=True,
+    #           interval=args.gap_monitor_interval,
+    #            dump_gradients=args.dump_gap_gradients,
+    #           dump_gradients_start_step=args.dump_gap_gradients_start_step,
+    #            dump_gradients_end_step=args.dump_gap_gradients_end_step,
+    #           dump_gradients_step_interval=args.dump_gap_gradients_step_interval,
+    #            dump_gradients_save_first_n=args.dump_gap_gradients_save_first_n,
+    #        ),
+    #   )
+
     return ExperimentConfig(
         model=model_config,
         dataset=dataset_config,
@@ -242,21 +257,36 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tokenizer-name-or-path", type=str, default=TOKENIZER_PATH)
     parser.add_argument("--sequence-length", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--max-steps", type=int, default=1600)
+    parser.add_argument("--max-steps", type=int, default=7600)
     parser.add_argument("--global-train-batch-size", type=int, default=512)
     parser.add_argument("--device-train-microbatch-size", type=int, default=16)
     parser.add_argument("--data-loader-num-workers", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
-    parser.add_argument("--warmup-steps", type=int, default=160)
+    #parser.add_argument("--adam-beta2", type=float, default=0.95)
+    #parser.add_argument("--weight-decay", type=float, default=0.1)
+    parser.add_argument(
+        "--max-grad-norm",
+        type=float,
+        default=1.0,
+        help="Set to 0 or a negative value to disable gradient clipping.",
+    )
+    parser.add_argument("--warmup-steps", type=int, default=760)
     parser.add_argument("--eval-interval", type=int, default=200)
     parser.add_argument("--eval-max-batches", type=int, default=-1)
-    parser.add_argument("--save-interval", type=int, default=400)
-    parser.add_argument("--wandb-project", type=str, default=None)
-    parser.add_argument("--wandb-entity", type=str, default=None)
+    parser.add_argument("--save-interval", type=int, default=10000)
+    parser.add_argument("--wandb-project", type=str, default="depthbench")
+    parser.add_argument("--wandb-entity", type=str, default="wang-keyu-2002-max-planck-society")
     parser.add_argument("--load-path", type=str, default=None)
     parser.add_argument("--load-trainer-state", action="store_true")
     parser.add_argument("--enable-layer-stats", action="store_true")
     parser.add_argument("--layer-stats-interval", type=int, default=1)
+    #parser.add_argument("--enable-gap-monitor", action="store_true")
+    #parser.add_argument("--gap-monitor-interval", type=int, default=20)
+    #parser.add_argument("--dump-gap-gradients", action="store_true")
+    #parser.add_argument("--dump-gap-gradients-start-step", type=int, default=0)
+    #parser.add_argument("--dump-gap-gradients-end-step", type=int, default=None)
+    #parser.add_argument("--dump-gap-gradients-step-interval", type=int, default=1)
+    #parser.add_argument("--dump-gap-gradients-save-first-n", type=int, default=None)
     return parser
 
 

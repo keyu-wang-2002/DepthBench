@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from olmo_core.config import DType
 from olmo_core.nn.feed_forward import ActivationFunction, FeedForwardConfig, FeedForwardType
+from olmo_core.nn.transformer import TransformerBlockType
 
 HF_TO_LLAMA_LIKE_KEY_MAP = {
     "hidden_size": "d_model",
@@ -36,6 +37,9 @@ DIRECT_LLAMA_LIKE_KEYS = {
     "init_std",
     "embedding_init_std",
     "embed_scale",
+    "block_name",
+    "residual_scaling_base_depth",
+    "attnres_block_size",
 }
 
 
@@ -129,6 +133,10 @@ def load_llama_like_kwargs(config_path: str | Path, tokenizer_vocab_size: int) -
         )
 
     model_kwargs["dtype"] = _resolve_dtype(model_kwargs.get("dtype"), default=DType.bfloat16)
+    if "block_name" in model_kwargs:
+        model_kwargs["block_name"] = TransformerBlockType(model_kwargs["block_name"])
+    elif "attnres_block_size" in model_kwargs:
+        model_kwargs["block_name"] = TransformerBlockType.attnres
     model_kwargs["vocab_size"] = int(tokenizer_vocab_size)
 
     feed_forward = _build_feed_forward_config(raw_config, model_kwargs["dtype"])

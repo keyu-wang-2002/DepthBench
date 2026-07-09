@@ -209,6 +209,7 @@ class LMHead(nn.Module):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
+        skip_norm: bool = False,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
         Applies the language modeling (LM) head to the input hidden states.
@@ -221,13 +222,14 @@ class LMHead(nn.Module):
         :param loss_div_factor: (Optional) Divisor for the loss, can be a scalar or tensor.
         :param return_logits: If True, returns logits along with the loss when labels are provided.
         :param logits_to_keep: If nonzero, restricts computation to the last N positions (if int) or to specific positions (if tensor).
+        :param skip_norm: If True, skip the final layer norm (e.g. when it was already folded into a fused kernel).
 
         :returns: If ``labels`` is ``None``, returns the logits tensor of shape ``(batch_size, seq_len, vocab_size)``.
                   If ``labels`` is provided, returns an ``LMOutputWithLoss`` named tuple containing the loss and optionally the logits.
         """
         B = x.shape[0]
 
-        h = self.norm(x) if self.norm is not None else x
+        h = x if skip_norm else (self.norm(x) if self.norm is not None else x) # h = self.norm(x) if self.norm is not None else x
 
         if isinstance(logits_to_keep, int):
             if logits_to_keep != 0:

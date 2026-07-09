@@ -98,11 +98,33 @@ class TransformerType(StrEnum):
 class TransformerBlockType(StrEnum):
     """
     An enumeration of the different transformer block implementations.
+
+    Our implementatios:
+    - Pre-LN
+    - depth-muP, completeP
+    - Peri-LN (Sandwich-LN)
+    - LNS
+    - DeepNorm
+    - KEEL: TODO
+    - AttnRes
+    - HC: TODO
+    - mHC: TODO
+    - MoDA: TODO
     """
 
     default = "default"
     """
-    ➡️ :class:`TransformerBlock`
+    ➡️ :class:`TransformerBlock` (applies Pre-LN)
+    """
+
+    depth_mup = "depth_mup"
+    """
+    ➡️ :class:`DepthScaledTransformerBlock` with depth-muP residual scaling.
+    """
+
+    completep = "completep"
+    """
+    ➡️ :class:`DepthScaledTransformerBlock` with CompleteP residual scaling.
     """
 
     default_scaled = "default_scaled"
@@ -110,14 +132,29 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`LayerNormScaledTransformerBlock` (applies LayerNorm Scaling)
     """
 
+    peri_norm = "peri_norm"
+    """
+    ➡️ :class:`PeriNormTransformerBlock` (applies Sandwich-LN)
+    """
+
+    deepnorm = "deepnorm"
+    """
+    ➡️ :class:`DeepNormTransformerBlock`
+    """
+
+    attnres = "attnres"
+    """
+    ➡️ :class:`AttnResTransformerBlock`.
+    """
+
+    default_depth_scaled = "default_depth_scaled"
+    """
+    ➡️ :class:`LayerNormDepthScaledTransformerBlock` (scales by total model depth)
+    """
+
     reordered_norm = "reordered_norm"
     """
     ➡️ :class:`ReorderedNormTransformerBlock`
-    """
-
-    peri_norm = "peri_norm"
-    """
-    ➡️ :class:`PeriNormTransformerBlock`
     """
 
     normalized = "normalized"
@@ -190,6 +227,16 @@ class TransformerBlockConfig(ModuleConfig):
     """
     A scaling factor applied to the feed-forward (MLP) output before adding it to the residual stream.
     """
+    residual_scaling_base_depth: Optional[int] = None
+    """
+    Reference depth for depth-muP / CompleteP block residual scaling.
+    """
+    attnres_block_size: Optional[int] = None
+    """
+    Block size for the attention residual (AttnRes) mechanism. When set, hidden states are
+    accumulated across layers within groups of this size via learned gates, then added back
+    at group boundaries. ``None`` disables AttnRes.
+    """
 
     def __post_init__(self, attention: Optional[AttentionConfig] = None):
         # Handle backwards compatibility: old configs used `attention` instead of `sequence_mixer`.
@@ -215,6 +262,10 @@ class TransformerBlockConfig(ModuleConfig):
         cache: Optional[BufferCache] = None,
     ) -> "TransformerBlockBase":
         from .block import (
+            AttnResTransformerBlock,
+            DeepNormTransformerBlock,
+            DepthScaledTransformerBlock,
+            LayerNormDepthScaledTransformerBlock,
             LayerNormScaledTransformerBlock,
             MoEHybridReorderedNormTransformerBlock,
             MoEHybridTransformerBlock,
@@ -228,6 +279,7 @@ class TransformerBlockConfig(ModuleConfig):
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
+        residual_scaling_base_depth = kwargs.pop("residual_scaling_base_depth", None)
         kwargs.update(
             d_model=d_model,
             block_idx=block_idx,
@@ -239,8 +291,32 @@ class TransformerBlockConfig(ModuleConfig):
         try:
             if self.name == TransformerBlockType.default:
                 return TransformerBlock(**kwargs)
+            elif self.name in (TransformerBlockType.depth_mup, TransformerBlockType.completep):
+                if residual_scaling_base_depth is None:
+                    raise OLMoConfigurationError(
+                        f"'{self.name}' requires 'residual_scaling_base_depth' to be set"
+                    )
+                if residual_scaling_base_depth <= 0:
+                    raise OLMoConfigurationError(
+                        "'residual_scaling_base_depth' must be positive, "
+                        f"got {residual_scaling_base_depth}"
+                    )
+                return DepthScaledTransformerBlock(
+                    residual_scaling_base_depth=residual_scaling_base_depth,
+                    residual_scaling_alpha=0.5
+                    if self.name == TransformerBlockType.depth_mup
+                    else 1.0,
+                    **kwargs,
+                )
+            elif self.name == TransformerBlockType.attnres:
+                kwargs.setdefault("attnres_block_size", 1)
+                return AttnResTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.default_scaled:
                 return LayerNormScaledTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.default_depth_scaled:
+                return LayerNormDepthScaledTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.deepnorm:
+                return DeepNormTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.reordered_norm:
                 return ReorderedNormTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.peri_norm:
@@ -460,8 +536,20 @@ class TransformerConfig(ModelConfig):
             num_params += self.embedding_norm.num_params(self.d_model)
 
         # All block params.
-        for block_config in self.resolved_block_configs:
+        has_attnres = False
+        for block_idx, block_config in enumerate(self.resolved_block_configs):
             num_params += block_config.num_params(self.d_model)
+            if block_config.name == TransformerBlockType.attnres:
+                has_attnres = True
+                # AttnRes adds MLP residual projection/norm in every block and
+                # attention residual projection/norm after the first block.
+                num_params += 2 * self.d_model
+                if block_idx > 0:
+                    num_params += 2 * self.d_model
+
+        if has_attnres:
+            # Final AttnRes aggregation projection/norm before the LM head.
+            num_params += 2 * self.d_model
 
         # LM head.
         num_params += self.lm_head.num_params(self.d_model, self.vocab_size)
@@ -1510,6 +1598,9 @@ class TransformerConfig(ModelConfig):
         if feed_forward is None and feed_forward_moe is None:
             feed_forward = FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype)
 
+        residual_scaling_base_depth = kwargs.pop("residual_scaling_base_depth", None)
+        attnres_block_size = kwargs.pop("attnres_block_size", None)
+
         # Configure blocks.
         block = TransformerBlockConfig(
             name=block_name,
@@ -1536,6 +1627,8 @@ class TransformerConfig(ModelConfig):
             feed_forward=feed_forward,
             feed_forward_moe=feed_forward_moe,
             layer_norm=layer_norm,
+            residual_scaling_base_depth=residual_scaling_base_depth,
+            attnres_block_size=attnres_block_size,
         )
 
         if block_mods and kwargs.get("block_overrides"):

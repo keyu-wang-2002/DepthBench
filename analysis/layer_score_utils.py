@@ -26,8 +26,11 @@ from analysis_utils import (
 
 class IdentityDecoderLayer(nn.Module):
     def forward(self, hidden_states, *args, **kwargs):
-        del args, kwargs
-        return normalize_layer_output(hidden_states)
+        del args
+        hidden_states = normalize_layer_output(hidden_states)
+        if "attnres_states" in kwargs:
+            return hidden_states, kwargs["attnres_states"]
+        return hidden_states
 
 
 def compute_mean_loss(
@@ -325,8 +328,39 @@ def swap_layer_weights(model, layer1_idx: int, layer2_idx: int):
     layer2 = layers[layer2_idx]
     state1 = state_dict_clone(layer1)
     state2 = state_dict_clone(layer2)
-    restore_state_dict(layer1, state2)
-    restore_state_dict(layer2, state1)
+    common_keys = set(state1).intersection(state2)
+    swapped_state1 = {key: value.clone() for key, value in state1.items()}
+    swapped_state2 = {key: value.clone() for key, value in state2.items()}
+    for key in common_keys:
+        if state1[key].shape != state2[key].shape:
+            continue
+        swapped_state1[key] = state2[key].to(device=state1[key].device, dtype=state1[key].dtype)
+        swapped_state2[key] = state1[key].to(device=state2[key].device, dtype=state2[key].dtype)
+    restore_state_dict(layer1, swapped_state1)
+    restore_state_dict(layer2, swapped_state2)
+    swap_layer_position_attrs(layer1, layer2)
+
+
+def layer_position_attrs_clone(layer: nn.Module) -> dict[str, object]:
+    attrs = {}
+    for attr_name in ("ln_scale",):
+        if hasattr(layer, attr_name):
+            attrs[attr_name] = getattr(layer, attr_name)
+    return attrs
+
+
+def restore_layer_position_attrs(layer: nn.Module, attrs: dict[str, object]) -> None:
+    for attr_name, value in attrs.items():
+        setattr(layer, attr_name, value)
+
+
+def swap_layer_position_attrs(layer1: nn.Module, layer2: nn.Module) -> None:
+    for attr_name in ("ln_scale",):
+        if hasattr(layer1, attr_name) and hasattr(layer2, attr_name):
+            value1 = getattr(layer1, attr_name)
+            value2 = getattr(layer2, attr_name)
+            setattr(layer1, attr_name, value2)
+            setattr(layer2, attr_name, value1)
 
 
 def compute_permutation_score_for_pair(
@@ -343,6 +377,8 @@ def compute_permutation_score_for_pair(
     layers = get_decoder_layers(model)
     original_state_1 = state_dict_clone(layers[layer1_idx])
     original_state_2 = state_dict_clone(layers[layer2_idx])
+    original_attrs_1 = layer_position_attrs_clone(layers[layer1_idx])
+    original_attrs_2 = layer_position_attrs_clone(layers[layer2_idx])
 
     swap_layer_weights(model, layer1_idx, layer2_idx)
 
@@ -357,6 +393,8 @@ def compute_permutation_score_for_pair(
     finally:
         restore_state_dict(layers[layer1_idx], original_state_1)
         restore_state_dict(layers[layer2_idx], original_state_2)
+        restore_layer_position_attrs(layers[layer1_idx], original_attrs_1)
+        restore_layer_position_attrs(layers[layer2_idx], original_attrs_2)
 
     return abs(baseline_loss - swapped_loss) / baseline_loss if baseline_loss > 1e-8 else 0.0
 

@@ -229,6 +229,36 @@ class TransformerBlock(TransformerBlockBase):
         return attn_flops + ff_flops
 
 
+class DepthScaledTransformerBlock(TransformerBlock):
+    """
+    A Pre-LN block with depth-parameterized residual scaling for Depth-muP / CompleteP.
+    """
+
+    def __init__(
+        self,
+        *,
+        residual_scaling_base_depth: int,
+        residual_scaling_alpha: float,
+        **kwargs,
+    ):
+        n_layers = kwargs["n_layers"]
+        if residual_scaling_base_depth <= 0:
+            raise ValueError(
+                "'residual_scaling_base_depth' must be positive, "
+                f"got {residual_scaling_base_depth}"
+            )
+        residual_scale = (n_layers / residual_scaling_base_depth) ** (-residual_scaling_alpha)
+        kwargs.pop("attention_residual_alpha", None)
+        kwargs.pop("feed_forward_residual_alpha", None)
+        super().__init__(
+            attention_residual_alpha=residual_scale,
+            feed_forward_residual_alpha=residual_scale,
+            **kwargs,
+        )
+        self.residual_scaling_base_depth = residual_scaling_base_depth
+        self.residual_scaling_alpha = residual_scaling_alpha
+
+
 class LayerNormScaledTransformerBlock(TransformerBlock):
     """
     A variant of ``TransformerBlock`` that applies
@@ -270,8 +300,7 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
         )
 
         # LayerNorm scaling factor 1/sqrt(layer_id), where layer_id is 1-based.
-        ln_scale_value = 1.0 / math.sqrt(block_idx + 1)
-        self.register_buffer("ln_scale", torch.tensor(ln_scale_value, dtype=torch.float32))
+        self.ln_scale: float = 1.0 / math.sqrt(block_idx + 1)
 
     def forward(
         self,
@@ -281,32 +310,26 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
-        scale = self.ln_scale.to(dtype=x.dtype, device=x.device)
         h = self.attention_residual_stream(
-            x, self.attention(self.attention_norm(x) * scale, **kwargs)
+            x, self.attention(self.attention_norm(x) * self.ln_scale, **kwargs)
         )
         return self.feed_forward_residual_stream(
-            h, self.feed_forward(self.feed_forward_norm(h) * scale)
+            h, self.feed_forward(self.feed_forward_norm(h) * self.ln_scale)
         )
 
 
-class ReorderedNormTransformerBlock(TransformerBlock):
+class LayerNormDepthScaledTransformerBlock(LayerNormScaledTransformerBlock):
     """
-    Like :class:`TransformerBlock` except that the attention norm is applied on the output
-    of attention instead of the input, and likewise the feed-forward norm is applied on the output
-    of the feed-forward instead of the input.
+    A variant of :class:`LayerNormScaledTransformerBlock` that uses the same LayerNorm
+    scaling factor in every block.
+
+    Each LayerNorm output is multiplied by ``1 / sqrt(L)``, where ``L`` is the total
+    number of transformer blocks.
     """
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        *,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        **kwargs,
-    ) -> torch.Tensor:
-        del loss_div_factor
-        h = self.attention_residual_stream(x, self.attention_norm(self.attention(x, **kwargs)))
-        return self.feed_forward_residual_stream(h, self.feed_forward_norm(self.feed_forward(h)))
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.ln_scale = 1.0 / math.sqrt(self.n_layers)
 
 
 class PeriNormTransformerBlock(TransformerBlock):
@@ -370,6 +393,143 @@ class PeriNormTransformerBlock(TransformerBlock):
         parallelize_module(
             self.post_attention_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
         )
+
+
+class DeepNormTransformerBlock(TransformerBlock):
+    """Decoder-only DeepNorm block: ``LN(alpha * x + F(x))`` for each sub-layer."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.deepnorm_alpha = (2 * self.n_layers) ** 0.25
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        del loss_div_factor
+        h = self.attention_norm(
+            self.deepnorm_alpha * x
+            + self.attention_residual_stream.dropout(self.attention(x, **kwargs))
+        )
+        return self.feed_forward_norm(
+            self.deepnorm_alpha * h
+            + self.feed_forward_residual_stream.dropout(self.feed_forward(h))
+        )
+
+
+class AttnResTransformerBlock(TransformerBlock):
+    """
+    A transformer block with the AttnRes residual aggregation mechanism.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        attnres_block_size: int = 1,
+        layer_norm: LayerNormConfig,
+        init_device: str = "cpu",
+        **kwargs,
+    ):
+        if attnres_block_size <= 0:
+            raise ValueError(f"attnres_block_size must be positive, got {attnres_block_size}")
+        super().__init__(
+            d_model=d_model,
+            block_idx=block_idx,
+            layer_norm=layer_norm,
+            init_device=init_device,
+            **kwargs,
+        )
+
+        from ..layer_norm import LayerNormType
+
+        self.attnres_block_size = attnres_block_size
+        _rms_cfg = LayerNormConfig(name=LayerNormType.rms, bias=False)
+        if block_idx > 0:
+            self.attn_res_proj = nn.Linear(d_model, 1, bias=False, device=init_device)
+            self.attn_res_norm = _rms_cfg.build(d_model, init_device=init_device)
+            nn.init.zeros_(self.attn_res_proj.weight)
+        self.mlp_res_proj = nn.Linear(d_model, 1, bias=False, device=init_device)
+        self.mlp_res_norm = _rms_cfg.build(d_model, init_device=init_device)
+        self.attnres_is_attn_boundary = (2 * block_idx) % attnres_block_size == 0
+        self.attnres_is_mlp_boundary = (2 * block_idx + 1) % attnres_block_size == 0
+        self.reset_attnres_parameters()
+
+    def reset_attnres_parameters(self) -> None:
+        if hasattr(self, "attn_res_proj"):
+            nn.init.zeros_(self.attn_res_proj.weight)
+        nn.init.zeros_(self.mlp_res_proj.weight)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        attnres_states: Optional[list] = None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, list]:
+        del loss_div_factor
+        from olmo_core.kernels.attnres import fused_attnres
+
+        prefix_sum = x
+        if attnres_states is None:
+            h_normed = self.attention_norm(prefix_sum)
+            attnres_states = [prefix_sum]
+            prefix_sum = None
+        else:
+            residuals = [*attnres_states, prefix_sum]
+            if self.attnres_is_attn_boundary:
+                attnres_states = residuals
+                prefix_sum = None
+            h_normed = fused_attnres(
+                query=self.attn_res_proj.weight,
+                residuals=residuals,
+                rms_weight=self.attn_res_norm.weight,
+                output_rms_weight=self.attention_norm.weight,
+                rms_eps=self.attn_res_norm.eps,
+            )
+
+        attn_out = self.attention(h_normed, **kwargs)
+        prefix_sum = attn_out if prefix_sum is None else prefix_sum + attn_out
+
+        mlp_residuals = [*attnres_states, prefix_sum]
+        if self.attnres_is_mlp_boundary:
+            attnres_states = mlp_residuals
+            prefix_sum = None
+        h_normed = fused_attnres(
+            query=self.mlp_res_proj.weight,
+            residuals=mlp_residuals,
+            rms_weight=self.mlp_res_norm.weight,
+            output_rms_weight=self.feed_forward_norm.weight,
+            rms_eps=self.mlp_res_norm.eps,
+        )
+
+        mlp_out = self.feed_forward(h_normed)
+        h = mlp_out if prefix_sum is None else prefix_sum + mlp_out
+        return h, attnres_states
+
+
+class ReorderedNormTransformerBlock(TransformerBlock):
+    """
+    Like :class:`TransformerBlock` except that the attention norm is applied on the output
+    of attention instead of the input, and likewise the feed-forward norm is applied on the output
+    of the feed-forward instead of the input.
+    """
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        del loss_div_factor
+        h = self.attention_residual_stream(x, self.attention_norm(self.attention(x, **kwargs)))
+        return self.feed_forward_residual_stream(h, self.feed_forward_norm(self.feed_forward(h)))
 
 
 @beta_feature

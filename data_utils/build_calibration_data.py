@@ -21,12 +21,12 @@ from tokenize_from_pretrain_datasets import iter_parquet_text_batches, load_hf_t
 
 log = logging.getLogger(__name__)
 
-DEFAULT_OUTPUT_DIR = "/fast/wangk/data/calibration"
+DEFAULT_OUTPUT_DIR = "data/calibration"
 DEFAULT_TOKENIZER_PATH = (
-    "/home/wangk/DepthBench/pretrain/OLMo-core/src/olmo_core/data/tokenizers/"
+    "pretrain/OLMo-core/src/olmo_core/data/tokenizers/"
     "allenai_gpt-neox-olmo-dolma-v1_5.json"
 )
-DEFAULT_FINEWEB_LOCAL_GLOB = "/fast/wangk/data/fineweb-edu/100BT/*.parquet"
+DEFAULT_FINEWEB_LOCAL_GLOB = "data/fineweb-edu/100BT/*.parquet"
 TARGET_TOTAL_TOKENS = 256 * 1024
 
 
@@ -59,7 +59,7 @@ SOURCE_PRESETS = {
         kind="parquet",
         parquet_glob=DEFAULT_FINEWEB_LOCAL_GLOB,
         text_field="text",
-        description="Local FineWeb-edu parquet shards under /fast/wangk/data/fineweb-edu/100BT.",
+        description="Local FineWeb-edu parquet shards under data/fineweb-edu/100BT.",
     ),
     "fineweb": SourceSpec(
         name="fineweb",

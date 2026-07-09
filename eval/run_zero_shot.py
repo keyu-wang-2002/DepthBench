@@ -12,9 +12,6 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from olmo_lm import OLMoNativeLM
-
-
 DEFAULT_ZERO_SHOT_TASKS = [
     "openbookqa",
     "winogrande",
@@ -25,18 +22,46 @@ DEFAULT_ZERO_SHOT_TASKS = [
     "piqa",
 ]
 
+BBH_REASONING_ZERO_SHOT_TASKS = [
+    "bbh_zeroshot_tracking_shuffled_objects_three_objects",
+    "bbh_zeroshot_tracking_shuffled_objects_five_objects",
+    "bbh_zeroshot_tracking_shuffled_objects_seven_objects",
+    "bbh_zeroshot_logical_deduction_three_objects",
+    "bbh_zeroshot_logical_deduction_five_objects",
+    "bbh_zeroshot_logical_deduction_seven_objects",
+    "bbh_zeroshot_boolean_expressions",
+    "bbh_zeroshot_multistep_arithmetic_two",
+    "bbh_zeroshot_web_of_lies",
+    "bbh_zeroshot_navigate",
+]
+
+TASK_SETS = {
+    "commonsense": DEFAULT_ZERO_SHOT_TASKS,
+    "bbh-reasoning": BBH_REASONING_ZERO_SHOT_TASKS,
+}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run zero-shot lm-eval-harness tasks on a native OLMo-core checkpoint."
     )
     parser.add_argument("checkpoint_dir", help="Checkpoint step directory or model_and_optim dir")
     parser.add_argument(
+        "--task-set",
+        choices=sorted(TASK_SETS),
+        default="commonsense",
+        help=(
+            "Named task set used when --tasks is omitted. "
+            "'commonsense' is the original 7-task suite; 'bbh-reasoning' is the "
+            "recommended 10-task BBH reasoning suite."
+        ),
+    )
+    parser.add_argument(
         "--tasks",
         nargs="+",
-        default=DEFAULT_ZERO_SHOT_TASKS,
+        default=None,
         help=(
-            "lm-eval task names. Defaults to the 7 zero-shot MC tasks: "
-            "openbookqa winogrande arc_challenge arc_easy hellaswag social_iqa piqa"
+            "Explicit lm-eval task names. Overrides --task-set when provided."
         ),
     )
     parser.add_argument("--tokenizer", default=None, help="Optional tokenizer path or HF id")
@@ -61,6 +86,17 @@ def parse_args() -> argparse.Namespace:
         help="Optional attention backend override",
     )
     parser.add_argument("--limit", type=float, default=None, help="Optional lm-eval sample limit")
+    parser.add_argument(
+        "--num-fewshot",
+        type=int,
+        default=None,
+        help="Few-shot count. By default, honor each lm-eval task's configured value.",
+    )
+    parser.add_argument(
+        "--log-samples",
+        action="store_true",
+        help="Include prompts, generations, and per-sample scores in the output JSON.",
+    )
     parser.add_argument(
         "--output-path",
         default=None,
@@ -90,6 +126,9 @@ def _to_jsonable(obj: Any) -> Any:
 
 def main() -> None:
     args = parse_args()
+    tasks = args.tasks if args.tasks is not None else TASK_SETS[args.task_set]
+
+    from olmo_lm import OLMoNativeLM
 
     lm = OLMoNativeLM.build(
         checkpoint_dir=args.checkpoint_dir,
@@ -103,11 +142,12 @@ def main() -> None:
 
     results = lm_eval.simple_evaluate(
         model=lm,
-        tasks=args.tasks,
-        num_fewshot=0,
+        tasks=tasks,
+        num_fewshot=args.num_fewshot,
         batch_size=args.batch_size,
         device=args.device,
         limit=args.limit,
+        log_samples=args.log_samples,
     )
 
     if args.output_path is not None:

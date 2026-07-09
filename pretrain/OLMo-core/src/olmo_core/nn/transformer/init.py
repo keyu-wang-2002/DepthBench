@@ -50,6 +50,19 @@ class InitMethod(StrEnum):
     with standard deviation 0.02.
     """
 
+    gpt2 = "gpt2"
+    """
+    Like :data:`normal`, but residual branch output projections are initialized with
+    ``std / sqrt(2 * num_blocks)``.
+    """
+
+    deepnorm = "deepnorm"
+    """
+    DeepNorm initialization for a decoder-only transformer using the default truncated-normal
+    initializer. Value/output projections and all feed-forward matrices scale the default
+    standard deviation by ``(8 * num_blocks) ** -0.25``.
+    """
+
     normalized = "normalized"
     """
     Follow the nGPT initialization scheme.
@@ -150,6 +163,14 @@ class InitMethod(StrEnum):
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ):
+        base_std = std
+
+        if self == InitMethod.deepnorm:
+            beta = (8 * num_blocks) ** -0.25
+            for linear in (m.w1, m.w2, m.w3):
+                init_linear(linear, std=std * beta, generator=generator)
+            return
+
         # Compute std for w1 initialization
         if self == InitMethod.fan_in:
             # For fan_in, w1 uses 1/√d_in where d_in = d_model (ignores base std parameter)
@@ -174,6 +195,8 @@ class InitMethod(StrEnum):
         if self == InitMethod.fan_in:
             # For fan_in, w2 uses 1/√d_in where d_in = hidden_size
             std = m.w2.in_features**-0.5
+        elif self == InitMethod.gpt2:
+            std = base_std / (2 * num_blocks) ** 0.5
         elif self == InitMethod.normalized:
             std = std / (2 * num_blocks) ** 0.5
 
@@ -190,6 +213,8 @@ class InitMethod(StrEnum):
         generator: Optional[torch.Generator] = None,
     ):
         from ..moe import DroplessMoEMLP, MoELinearRouter, MoEMLP
+
+        base_std = std
 
         if self == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
@@ -228,6 +253,8 @@ class InitMethod(StrEnum):
         # Initialize w2 (maps hidden_size -> d_model, fan-in = hidden_size)
         if self == InitMethod.fan_in:
             std = mlp.hidden_size**-0.5
+        elif self == InitMethod.gpt2:
+            std = base_std / (2 * num_blocks) ** 0.5
 
         _apply_init(
             nn.init.trunc_normal_,
@@ -242,6 +269,8 @@ class InitMethod(StrEnum):
         # Initialize w3 (maps d_model -> hidden_size, fan-in = d_model)
         if self == InitMethod.fan_in:
             std = mlp.d_model**-0.5
+        elif self == InitMethod.gpt2:
+            std = base_std
 
         _apply_init(
             nn.init.trunc_normal_,

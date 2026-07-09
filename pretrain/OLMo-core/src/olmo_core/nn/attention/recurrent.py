@@ -274,7 +274,7 @@ class GatedDeltaNet(SequenceMixer):
         inv_dt = dt + torch.log(-torch.expm1(-dt))
         self.dt_bias.copy_(inv_dt)
 
-        if init_method == InitMethod.llama:
+        if init_method in (InitMethod.gpt2, InitMethod.llama):
             std = std / (2 * num_blocks) ** 0.5
         elif init_method == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5

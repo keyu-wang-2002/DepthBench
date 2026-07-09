@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TRAIN_PARQUET_GLOB = "data/fineweb-edu/100BT/*.parquet"
 DEFAULT_EVAL_PARQUET_PATH = "data/fineweb-edu/eval/eval_013_00008.parquet"
 DEFAULT_OUTPUT_DIR = "data/fineweb-edu/pre-tokenize"
-DEFAULT_TOKENIZER_PATH = "DepthBench/pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json"
+DEFAULT_TOKENIZER_PATH = "pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json"
 
 
 @dataclass

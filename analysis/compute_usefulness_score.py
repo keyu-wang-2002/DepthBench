@@ -47,8 +47,11 @@ class LinearDecoderLayer(nn.Module):
         self.eval()
 
     def forward(self, hidden_states, *args, **kwargs):
-        del args, kwargs
-        return self.linear(normalize_layer_output(hidden_states))
+        del args
+        output = self.linear(normalize_layer_output(hidden_states))
+        if "attnres_states" in kwargs:
+            return output, kwargs["attnres_states"]
+        return output
 
 
 def compute_loss_with_layer_replacement(
