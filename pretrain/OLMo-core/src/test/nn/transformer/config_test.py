@@ -2,7 +2,12 @@ import json
 
 from cached_path import cached_path
 
-from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
+from olmo_core.nn.transformer.config import (
+    HyperConnectionsConfig,
+    TransformerBlockConfig,
+    TransformerBlockType,
+    TransformerConfig,
+)
 
 OLMO3_7B_CHECKPOINT = "https://olmo-checkpoints.org/ai2-llm/Olmo-3-1025-7B/stage1/step0"
 
@@ -23,4 +28,25 @@ def test_load_olmo3_7b_config():
 
     # Round-trip through as_config_dict / from_dict should be lossless.
     roundtripped = TransformerConfig.from_dict(config.as_config_dict())
+    assert roundtripped.as_config_dict() == config.as_config_dict()
+
+
+def test_roundtrip_with_hyper_connections():
+    config = TransformerConfig.llama_like(
+        d_model=128,
+        vocab_size=32000,
+        n_layers=2,
+        n_heads=8,
+        block_name=TransformerBlockType.mhc,
+    )
+    config.block.hyper_connections = HyperConnectionsConfig(
+        kind="liger_mhc",
+        num_residual_streams=4,
+        gating_factor_init=0.01,
+        sinkhorn_iters=20,
+        liger_phi_dtype="bfloat16",
+    )
+
+    roundtripped = TransformerConfig.from_dict(config.as_config_dict())
+
     assert roundtripped.as_config_dict() == config.as_config_dict()

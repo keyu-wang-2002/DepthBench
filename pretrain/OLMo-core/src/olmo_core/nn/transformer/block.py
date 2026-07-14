@@ -23,7 +23,11 @@ from ..layer_norm import LayerNormConfig
 from ..moe import MoEConfig, MoERouter
 from ..moe.parallel_mlp import ParallelMLPBase
 from ..residual_stream import ResidualStream
-from .config import TransformerDataParallelWrappingStrategy
+from .config import (
+    HyperConnectionsConfig,
+    HyperConnectionsKind,
+    TransformerDataParallelWrappingStrategy,
+)
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
@@ -91,6 +95,32 @@ class TransformerBlockBase(nn.Module):
     @abstractmethod
     def num_flops_per_token(self, seq_len: int) -> int:
         raise NotImplementedError
+
+
+class PreNormAttentionBranch(nn.Module):
+    """Pre-norm sequence-mixer branch wrapped by a hyper-connection."""
+
+    def __init__(self, norm: nn.Module, attention: nn.Module, dropout: float = 0.0):
+        super().__init__()
+        self.norm = norm
+        self.attention = attention
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        return self.dropout(self.attention(self.norm(x), **kwargs))
+
+
+class PreNormFeedForwardBranch(nn.Module):
+    """Pre-norm feed-forward branch wrapped by a hyper-connection."""
+
+    def __init__(self, norm: nn.Module, feed_forward: nn.Module, dropout: float = 0.0):
+        super().__init__()
+        self.norm = norm
+        self.feed_forward = feed_forward
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.dropout(self.feed_forward(self.norm(x)))
 
 
 class TransformerBlock(TransformerBlockBase):
@@ -229,6 +259,140 @@ class TransformerBlock(TransformerBlockBase):
         return attn_flops + ff_flops
 
 
+class HyperConnectionsTransformerBlock(TransformerBlockBase):
+    """Shared implementation for pre-norm HC and mHC transformer blocks.
+
+    Hyper-connections replace, rather than wrap, OLMo's standard residual streams.
+    """
+
+    allowed_kinds: frozenset[HyperConnectionsKind] = frozenset()
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        n_layers: int,
+        sequence_mixer: SequenceMixerConfig,
+        feed_forward: FeedForwardConfig,
+        layer_norm: LayerNormConfig,
+        hyper_connections: HyperConnectionsConfig,
+        dropout: float = 0.0,
+        attention_residual_alpha: float = 1.0,
+        feed_forward_residual_alpha: float = 1.0,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ):
+        super().__init__(n_layers=n_layers)
+        del attention_residual_alpha, feed_forward_residual_alpha
+        if hyper_connections.kind not in self.allowed_kinds:
+            allowed = ", ".join(sorted(kind.value for kind in self.allowed_kinds))
+            raise ValueError(
+                f"{self.__class__.__name__} requires one of [{allowed}], "
+                f"got '{hyper_connections.kind.value}'"
+            )
+
+        self.d_model = d_model
+        self.block_idx = block_idx
+        self.attention = sequence_mixer.build(
+            d_model,
+            layer_idx=block_idx,
+            n_layers=n_layers,
+            init_device=init_device,
+            cache=cache,
+        )
+        self.attention_norm = layer_norm.build(d_model, init_device=init_device)
+        self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
+        self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
+
+        connector_dtype = next(self.attention.parameters()).dtype
+        self.attention_hyper_connection = hyper_connections.build(
+            dim=d_model,
+            branch=PreNormAttentionBranch(self.attention_norm, self.attention, dropout),
+            layer_index=block_idx * 2,
+            init_device=init_device,
+            dtype=connector_dtype,
+        )
+        self.feed_forward_hyper_connection = hyper_connections.build(
+            dim=d_model,
+            branch=PreNormFeedForwardBranch(self.feed_forward_norm, self.feed_forward, dropout),
+            layer_index=block_idx * 2 + 1,
+            init_device=init_device,
+            dtype=connector_dtype,
+        )
+
+        self._uses_hyper_connections = True
+        self.hyper_connection_num_streams = hyper_connections.num_residual_streams
+        self.hyper_connection_scale_output_init = hyper_connections.scale_output_init_by_sqrt_n
+        self.hyper_connection_reduce_mode = hyper_connections.reduce_mode
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        del loss_div_factor
+        h = self.attention_hyper_connection(x, **kwargs)
+        return self.feed_forward_hyper_connection(h)
+
+    def apply_tp(
+        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+    ):
+        del tp_mesh, input_layout, float8_enabled
+        raise NotImplementedError("Tensor parallelism is not implemented for HC / mHC blocks")
+
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
+    ):
+        del cp_mesh, ring, uly
+        raise NotImplementedError("Context parallelism is not implemented for HC / mHC blocks")
+
+    def apply_fsdp(
+        self,
+        dp_mesh: Optional[DeviceMesh] = None,
+        prefetch_factor: int = 0,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+        **fsdp_kwargs,
+    ):
+        if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+            fsdp_att = cast(FSDPModule, fully_shard(self.attention, mesh=dp_mesh, **fsdp_kwargs))
+            fsdp_mlp = cast(FSDPModule, fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs))
+            fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
+            if prefetch_factor > 0:
+                fsdp_root.set_modules_to_forward_prefetch([fsdp_att])
+                fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp])
+        else:
+            fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        return self.attention.num_flops_per_token(seq_len) + self.feed_forward.num_flops_per_token(
+            seq_len
+        )
+
+
+class HCTransformerBlock(HyperConnectionsTransformerBlock):
+    """Transformer block using Hyper-Connections residual routing."""
+
+    allowed_kinds = frozenset({HyperConnectionsKind.hc})
+
+
+class MHCTransformerBlock(HyperConnectionsTransformerBlock):
+    """Transformer block using manifold-constrained Hyper-Connections routing."""
+
+    allowed_kinds = frozenset(
+        {
+            HyperConnectionsKind.mhc,
+            HyperConnectionsKind.mhc_static,
+            HyperConnectionsKind.liger_mhc,
+        }
+    )
+
+
 class DepthScaledTransformerBlock(TransformerBlock):
     """
     A Pre-LN block with depth-parameterized residual scaling for Depth-muP / CompleteP.
@@ -244,8 +408,7 @@ class DepthScaledTransformerBlock(TransformerBlock):
         n_layers = kwargs["n_layers"]
         if residual_scaling_base_depth <= 0:
             raise ValueError(
-                "'residual_scaling_base_depth' must be positive, "
-                f"got {residual_scaling_base_depth}"
+                f"'residual_scaling_base_depth' must be positive, got {residual_scaling_base_depth}"
             )
         residual_scale = (n_layers / residual_scaling_base_depth) ** (-residual_scaling_alpha)
         kwargs.pop("attention_residual_alpha", None)

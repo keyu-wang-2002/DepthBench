@@ -37,6 +37,9 @@ from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
 from olmo_core.nn.rope import RoPEConfig
 from olmo_core.nn.transformer import (
+    HCTransformerBlock,
+    HyperConnectionsConfig,
+    MHCTransformerBlock,
     MoEHybridTransformerBlockBase,
     MoEReorderedNormTransformerBlock,
     MoETransformer,
@@ -59,6 +62,40 @@ from olmo_core.testing.utils import FLA_MARKS, has_fla
 from olmo_core.utils import get_default_device, seed_all
 
 log = logging.getLogger(__name__)
+
+
+@pytest.mark.parametrize(
+    ("block_type", "backend", "expected_class"),
+    [
+        (TransformerBlockType.hc, "hc", HCTransformerBlock),
+        (TransformerBlockType.mhc, "mhc_static", MHCTransformerBlock),
+    ],
+)
+def test_hyper_connections_tiny_model(block_type, backend, expected_class):
+    config = TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=128,
+        n_layers=2,
+        n_heads=4,
+        hidden_size_multiple_of=8,
+        block_name=block_type,
+    )
+    config.block.hyper_connections = HyperConnectionsConfig(
+        kind=backend,
+        num_residual_streams=4,
+        sinkhorn_iters=4,
+    )
+    model = config.build()
+    model.init_weights(device=torch.device("cpu"))
+
+    block = model.blocks["0"]
+    assert isinstance(block, expected_class)
+    assert not hasattr(block, "attention_residual_stream")
+    output = model(torch.randint(0, 128, (2, 8)), return_logits=True)
+    output.logits.square().mean().backward()
+
+    assert output.logits.shape == (2, 8, 128)
+    assert all(p.grad is None or torch.isfinite(p.grad).all() for p in model.parameters())
 
 
 @pytest.mark.parametrize(
