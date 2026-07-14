@@ -21,6 +21,35 @@ torchrun --nproc_per_node=4 --master_port=35101 --master_addr=localhost "example
     --eval-interval=7600 --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-mhc-400M-lr2e-3"
 
+# Pre-norm MoDA
+torchrun --nproc_per_node=8 --master_port=35200 --master_addr=localhost "examples/pretrain_moda.py" \
+    --run_name=pretrain-prenorm-moda-400M-lr2e-3 \
+    --model-config="configs/llama_400m_L24.json" \
+    --tokenizer-name-or-path="pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
+    --seed=42 --max-steps=7600 --global-train-batch-size=512 \
+    --device-train-microbatch-size=4 --learning-rate=2e-3 --warmup-steps=760 \
+    --eval-interval=200 --save-interval=3000 \
+    --save-folder="ckpt/depthbench/pretrain-prenorm-moda-400M-lr2e-3"
+
+# Post-norm baseline and paper-aligned post-norm MoDA use the same common arguments.
+torchrun --nproc_per_node=8 --master_port=35201 --master_addr=localhost "examples/pretrain_postnorm.py" \
+    --run_name=pretrain-postnorm-400M-lr2e-3 \
+    --model-config="configs/llama_400m_L24.json" \
+    --tokenizer-name-or-path="pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
+    --seed=42 --max-steps=7600 --global-train-batch-size=512 \
+    --device-train-microbatch-size=16 --learning-rate=2e-3 --warmup-steps=760 \
+    --eval-interval=200 --save-interval=3000 \
+    --save-folder="ckpt/depthbench/pretrain-postnorm-400M-lr2e-3"
+
+torchrun --nproc_per_node=8 --master_port=35202 --master_addr=localhost "examples/pretrain_postnorm_moda.py" \
+    --run_name=pretrain-postnorm-moda-400M-lr2e-3 \
+    --model-config="configs/llama_400m_L24.json" \
+    --tokenizer-name-or-path="pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
+    --seed=42 --max-steps=7600 --global-train-batch-size=512 \
+    --device-train-microbatch-size=4 --learning-rate=2e-3 --warmup-steps=760 \
+    --eval-interval=200 --save-interval=3000 \
+    --save-folder="ckpt/depthbench/pretrain-postnorm-moda-400M-lr2e-3"
+
 # Pre-LN
 torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "examples/pretrain_preln.py" \
     --run_name=pretrain-preln-400M-lr2e-3 \

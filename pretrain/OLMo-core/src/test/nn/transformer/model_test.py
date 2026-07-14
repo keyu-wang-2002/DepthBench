@@ -40,6 +40,7 @@ from olmo_core.nn.transformer import (
     HCTransformerBlock,
     HyperConnectionsConfig,
     MHCTransformerBlock,
+    MoDAConfig,
     MoEHybridTransformerBlockBase,
     MoEReorderedNormTransformerBlock,
     MoETransformer,
@@ -62,6 +63,68 @@ from olmo_core.testing.utils import FLA_MARKS, has_fla
 from olmo_core.utils import get_default_device, seed_all
 
 log = logging.getLogger(__name__)
+
+
+@pytest.mark.parametrize("block_name", ["post_norm", "moda", "post_norm_moda"])
+def test_tiny_moda_block_types_construct(block_name: str):
+    config = TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=128,
+        n_layers=2,
+        n_heads=4,
+        n_kv_heads=4,
+        hidden_size_multiple_of=8,
+        dtype=DType.float32,
+        block_name=TransformerBlockType(block_name),
+        moda=MoDAConfig() if "moda" in block_name else None,
+    )
+    model = config.build()
+
+    assert config.num_params == model.num_params
+    assert (
+        type(model.blocks["0"]).__name__
+        == {
+            "post_norm": "PostNormTransformerBlock",
+            "moda": "MoDATransformerBlock",
+            "post_norm_moda": "PostNormMoDATransformerBlock",
+        }[block_name]
+    )
+
+
+@pytest.mark.parametrize("block_name", ["moda", "post_norm_moda"])
+def test_tiny_moda_forward_backward_with_fake_kernel(block_name: str):
+    def fake_depth_attention(q, k, v, *, cached_k, cached_v, **kwargs):
+        del k, v, kwargs
+        return q + cached_k.mean(dim=1, keepdim=True) + cached_v.mean(dim=1, keepdim=True)
+
+    config = TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=128,
+        n_layers=2,
+        n_heads=4,
+        n_kv_heads=4,
+        hidden_size_multiple_of=8,
+        dtype=DType.float32,
+        block_name=TransformerBlockType(block_name),
+        moda=MoDAConfig(),
+    )
+    model = config.build()
+    model.init_weights(device=torch.device("cpu"))
+    for block in model.blocks.values():
+        block.attention._parallel_moda = fake_depth_attention
+
+    token_ids = torch.randint(0, config.vocab_size, (2, 8))
+    output = model(input_ids=token_ids, labels=token_ids)
+    output.loss.backward()
+
+    depth_kv_grads = [
+        param.grad
+        for name, param in model.named_parameters()
+        if "kv_proj" in name and param.requires_grad
+    ]
+    assert torch.isfinite(output.loss)
+    assert depth_kv_grads
+    assert all(grad is not None and torch.isfinite(grad).all() for grad in depth_kv_grads)
 
 
 @pytest.mark.parametrize(
