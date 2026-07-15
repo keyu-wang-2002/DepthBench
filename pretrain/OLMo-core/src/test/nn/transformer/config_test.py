@@ -4,6 +4,7 @@ from cached_path import cached_path
 
 from olmo_core.nn.transformer.config import (
     HyperConnectionsConfig,
+    HyperConnectionsKind,
     TransformerBlockConfig,
     TransformerBlockType,
     TransformerConfig,
@@ -50,3 +51,21 @@ def test_roundtrip_with_hyper_connections():
     roundtripped = TransformerConfig.from_dict(config.as_config_dict())
 
     assert roundtripped.as_config_dict() == config.as_config_dict()
+
+
+def test_legacy_default_block_with_hyper_connections_is_migrated():
+    config = TransformerConfig.llama_like(
+        d_model=128,
+        vocab_size=32000,
+        n_layers=2,
+        n_heads=8,
+    )
+    config_dict = config.as_config_dict()
+    config_dict["block"]["hyper_connections"] = HyperConnectionsConfig(
+        kind="liger_mhc"
+    ).as_config_dict()
+
+    migrated = TransformerConfig.from_dict(config_dict)
+
+    assert migrated.block.name == TransformerBlockType.mhc
+    assert migrated.block.hyper_connections.kind == HyperConnectionsKind.liger_mhc

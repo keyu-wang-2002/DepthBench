@@ -378,6 +378,14 @@ class TransformerBlockConfig(ModuleConfig):
             raise OLMoConfigurationError(
                 "TransformerBlockConfig requires 'sequence_mixer' to be set."
             )
+        # HC/mHC checkpoints created before dedicated block registration encoded the
+        # connector on an otherwise-default block. Preserve their architecture on load.
+        if self.name == TransformerBlockType.default and self.hyper_connections is not None:
+            self.name = (
+                TransformerBlockType.hc
+                if self.hyper_connections.kind == HyperConnectionsKind.hc
+                else TransformerBlockType.mhc
+            )
 
     def build(
         self,
