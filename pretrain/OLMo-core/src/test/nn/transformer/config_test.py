@@ -2,6 +2,10 @@ import json
 
 from cached_path import cached_path
 
+from olmo_core.generate.generation_module.transformer.generation_module import (
+    _set_attention_backend,
+)
+from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer.config import (
     MoDAConfig,
     TransformerBlockConfig,
@@ -45,3 +49,19 @@ def test_roundtrip_with_moda_block_config():
     roundtripped = TransformerConfig.from_dict(config.as_config_dict())
 
     assert roundtripped.as_config_dict() == config.as_config_dict()
+
+
+def test_attention_backend_override_does_not_change_moda_backend():
+    config = TransformerConfig.llama_like(
+        d_model=128,
+        vocab_size=32000,
+        n_layers=2,
+        n_heads=8,
+        block_name=TransformerBlockType.moda,
+        moda=MoDAConfig(backend="v17"),
+    )
+
+    _set_attention_backend(config, AttentionBackendName.torch)
+
+    assert config.block.sequence_mixer.backend == AttentionBackendName.torch
+    assert config.block.moda.backend == "v17"
