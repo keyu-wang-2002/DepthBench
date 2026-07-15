@@ -420,6 +420,97 @@ class DeepNormTransformerBlock(TransformerBlock):
         )
 
 
+class KeelTransformerBlock(TransformerBlock):
+    """
+    KEEL block: ``LN(alpha * x + F(LN(x)))`` for every non-initial sublayer.
+
+    ``alpha = 2 * n_layers`` because KEEL counts attention and FFN as separate
+    sublayers. The first attention sublayer is plain Pre-LN, and the first FFN
+    sublayer is Post-LN without alpha.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        n_layers: int,
+        sequence_mixer: SequenceMixerConfig,
+        feed_forward: FeedForwardConfig,
+        layer_norm: LayerNormConfig,
+        dropout: float = 0.0,
+        attention_residual_alpha: float = 1.0,
+        feed_forward_residual_alpha: float = 1.0,
+        attnres_block_size: Optional[int] = None,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ):
+        if attnres_block_size is not None:
+            raise ValueError("KEEL does not support attnres_block_size")
+        if attention_residual_alpha != 1.0 or feed_forward_residual_alpha != 1.0:
+            raise ValueError(
+                "KEEL does not use attention_residual_alpha/feed_forward_residual_alpha"
+            )
+
+        super().__init__(
+            d_model=d_model,
+            block_idx=block_idx,
+            n_layers=n_layers,
+            sequence_mixer=sequence_mixer,
+            feed_forward=feed_forward,
+            layer_norm=layer_norm,
+            dropout=dropout,
+            attention_residual_alpha=1.0,
+            feed_forward_residual_alpha=1.0,
+            init_device=init_device,
+            cache=cache,
+        )
+
+        self.post_attention_norm = (
+            None if block_idx == 0 else layer_norm.build(d_model, init_device=init_device)
+        )
+        self.post_feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
+        self.keel_alpha = float(2 * n_layers)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        del loss_div_factor
+
+        attn_out = self.attention_residual_stream.dropout(
+            self.attention(self.attention_norm(x), **kwargs)
+        )
+        if self.post_attention_norm is None:
+            h = x + attn_out
+        else:
+            h = self.post_attention_norm(self.keel_alpha * x + attn_out)
+
+        mlp_out = self.feed_forward_residual_stream.dropout(
+            self.feed_forward(self.feed_forward_norm(h))
+        )
+        if self.block_idx == 0:
+            return self.post_feed_forward_norm(h + mlp_out)
+        return self.post_feed_forward_norm(self.keel_alpha * h + mlp_out)
+
+    def apply_tp(
+        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+    ):
+        super().apply_tp(tp_mesh, input_layout=input_layout, float8_enabled=float8_enabled)
+        if self.post_attention_norm is not None:
+            parallelize_module(
+                self.post_attention_norm,
+                device_mesh=tp_mesh,
+                parallelize_plan=SequenceParallel(),
+            )
+        parallelize_module(
+            self.post_feed_forward_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+        )
+
+
 class AttnResTransformerBlock(TransformerBlock):
     """
     A transformer block with the AttnRes residual aggregation mechanism.
