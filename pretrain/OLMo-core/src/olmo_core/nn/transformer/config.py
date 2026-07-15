@@ -105,7 +105,7 @@ class TransformerBlockType(StrEnum):
     - Peri-LN (Sandwich-LN)
     - LNS
     - DeepNorm
-    - KEEL: TODO
+    - KEEL
     - AttnRes
     - HC
     - mHC
@@ -155,6 +155,9 @@ class TransformerBlockType(StrEnum):
     mhc = "mhc"
     """
     ➡️ :class:`MHCTransformerBlock`.
+    keel = "keel"
+    """
+    ➡️ :class:`KeelTransformerBlock`.
     """
 
     default_depth_scaled = "default_depth_scaled"
@@ -401,6 +404,7 @@ class TransformerBlockConfig(ModuleConfig):
             DeepNormTransformerBlock,
             DepthScaledTransformerBlock,
             HCTransformerBlock,
+            KeelTransformerBlock,
             LayerNormDepthScaledTransformerBlock,
             LayerNormScaledTransformerBlock,
             MoEHybridReorderedNormTransformerBlock,
@@ -474,6 +478,8 @@ class TransformerBlockConfig(ModuleConfig):
                         "mHC blocks require kind 'mhc', 'mhc_static', or 'liger_mhc'"
                     )
                 return MHCTransformerBlock(hyper_connections=hyper_connections, **kwargs)
+            elif self.name == TransformerBlockType.keel:
+                return KeelTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.default_scaled:
                 return LayerNormScaledTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.default_depth_scaled:
@@ -501,7 +507,7 @@ class TransformerBlockConfig(ModuleConfig):
                 f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
             ) from e
 
-    def num_params(self, d_model: int) -> int:
+    def num_params(self, d_model: int, block_idx: Optional[int] = None) -> int:
         block_params = 0
 
         # Block attn and MLP scaling factors.
@@ -539,11 +545,15 @@ class TransformerBlockConfig(ModuleConfig):
                     )
                 )
             block_params += 2 * hyper_connections.num_params(d_model)
+        if self.name == TransformerBlockType.keel:
+            assert self.layer_norm is not None
+            extra_norms = 1 if block_idx == 0 else 2
+            block_params += extra_norms * self.layer_norm.num_params(d_model)
 
         return block_params
 
-    def num_active_params(self, d_model: int) -> int:
-        num_params = self.num_params(d_model)
+    def num_active_params(self, d_model: int, block_idx: Optional[int] = None) -> int:
+        num_params = self.num_params(d_model, block_idx=block_idx)
         if self.feed_forward_moe is None:
             return num_params
 
@@ -713,7 +723,7 @@ class TransformerConfig(ModelConfig):
         # All block params.
         has_attnres = False
         for block_idx, block_config in enumerate(self.resolved_block_configs):
-            num_params += block_config.num_params(self.d_model)
+            num_params += block_config.num_params(self.d_model, block_idx=block_idx)
             if block_config.name == TransformerBlockType.attnres:
                 has_attnres = True
                 # AttnRes adds MLP residual projection/norm in every block and
@@ -744,8 +754,10 @@ class TransformerConfig(ModelConfig):
             num_active_params += self.embedding_norm.num_params(self.d_model)
 
         # All block active params.
-        for block_config in self.resolved_block_configs:
-            num_active_params += block_config.num_active_params(self.d_model)
+        for block_idx, block_config in enumerate(self.resolved_block_configs):
+            num_active_params += block_config.num_active_params(
+                self.d_model, block_idx=block_idx
+            )
 
         # LM head.
         num_active_params += self.lm_head.num_params(self.d_model, self.vocab_size)
