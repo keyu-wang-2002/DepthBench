@@ -53,6 +53,13 @@ def test_roundtrip_with_hyper_connections():
     assert roundtripped.as_config_dict() == config.as_config_dict()
 
 
+def test_hyper_connection_activation_defaults_match_paper_parameterizations():
+    assert HyperConnectionsConfig(kind="hc").use_tanh
+    assert not HyperConnectionsConfig(kind="mhc").use_tanh
+    assert not HyperConnectionsConfig(kind="liger_mhc").use_tanh
+    assert HyperConnectionsConfig(kind="mhc", tanh=True).use_tanh
+
+
 def test_legacy_default_block_with_hyper_connections_is_migrated():
     config = TransformerConfig.llama_like(
         d_model=128,

@@ -9,8 +9,8 @@ pre-normalized attention or feed-forward branch and replaces OLMo-core's
 ## Training entries
 
 Use `examples/pretrain_hc.py` for HC and `examples/pretrain_mhc.py` for mHC. Both
-default to four residual streams. The mHC entry uses the paper-aligned routing
-scale `alpha=0.01`, 20 Sinkhorn iterations, and the fused Liger backend:
+default to four residual streams. The mHC entry uses the paper routing settings
+`alpha=0.01` and 20 Sinkhorn iterations with the fused Liger backend:
 
 ```bash
 pip install 'liger-kernel>=0.8.0'
@@ -24,6 +24,16 @@ torchrun --nproc_per_node=4 examples/pretrain_mhc.py \
 while `--mhc-backend=mhc` selects the experimental input-dependent PyTorch
 backend. Liger mHC requires a CUDA environment with compatible recent PyTorch
 and Triton versions.
+
+The Liger backend matches the paper's per-sublayer routing equations, but the
+default DepthBench experiment is not a bit-for-bit reproduction of the paper's
+system implementation. It keeps `phi` in BF16 for Tensor Core throughput,
+whereas the paper specifies TF32, and it applies the existing
+`scale_output_init_by_sqrt_n` initialization option. The paper does not specify
+the final multi-stream readout; DepthBench currently uses mean collapse. The
+later DeepSeek TileKernels release contains a learned, input-dependent mHC head,
+which is not implemented here. Treat `mhc_static` as a historical static
+ablation, not as the paper's dynamic mHC method.
 
 Internally streams are folded into the batch dimension as `[B * HC, T, C]` and
 collapsed to `[B, T, C]` before the final LM-head normalization/projection.
