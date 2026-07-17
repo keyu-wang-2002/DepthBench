@@ -155,6 +155,8 @@ class TransformerBlockType(StrEnum):
     mhc = "mhc"
     """
     ➡️ :class:`MHCTransformerBlock`.
+    """
+
     keel = "keel"
     """
     ➡️ :class:`KeelTransformerBlock`.
