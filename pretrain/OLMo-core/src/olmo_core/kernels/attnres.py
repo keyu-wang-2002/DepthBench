@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 import torch
@@ -44,12 +45,13 @@ _TORCH_TO_TL_DTYPE = {
         for BD, num_warps in [(64, 1), (128, 2), (256, 4), (512, 4), (1024, 8)]
         for num_stages in [3, 4]
     ],
-    key=['L', 'D', 'HAS_ONORM'],
+    key=['L', 'D', 'HAS_ONORM', 'HAS_BIAS', 'TOP_K'],
     **autotune_cache_kwargs,
 )
 @triton.jit
 def attnres_fwd_kernel(
     q,
+    bias,
     res,
     w,
     o,
@@ -66,6 +68,8 @@ def attnres_fwd_kernel(
     BL: tl.constexpr,
     BD: tl.constexpr,
     HAS_ONORM: tl.constexpr,
+    HAS_BIAS: tl.constexpr,
+    TOP_K: tl.constexpr,
     DTYPE: tl.constexpr,
 ):
     i_n = tl.program_id(0).to(tl.int64)
@@ -102,7 +106,19 @@ def attnres_fwd_kernel(
     # save `score / D` so bwd_dv does not repeat the full LxD dot product for `sum_d (v * rstd) * (w * q)`.
     b_score = b_logits * b_rstd
     b_logits = b_score * scale
+    if HAS_BIAS:
+        b_logits += tl.load(bias + o_l, mask=m_l, other=0.).to(tl.float32)
     b_logits = tl.where(m_l, b_logits, -float("inf"))
+    if TOP_K > 0:
+        b_keep = o_l < 0
+        b_work = b_logits
+        for _ in range(0, TOP_K):
+            b_top = tl.max(b_work, axis=0)
+            b_selected_idx = tl.min(tl.where(b_work == b_top, o_l, BL), axis=0)
+            b_selected = o_l == b_selected_idx
+            b_keep = b_keep | b_selected
+            b_work = tl.where(b_selected, -float("inf"), b_work)
+        b_logits = tl.where(b_keep, b_logits, -float("inf"))
     b_logits = exp(b_logits - tl.max(b_logits, axis=0))
     # [BL]
     b_p = b_logits / tl.sum(b_logits, axis=0)
@@ -163,7 +179,7 @@ def attnres_fwd_kernel(
         ]
         for num_stages in [3, 4]
     ],
-    key=['L', 'D', 'HAS_ONORM'],
+    key=['L', 'D', 'HAS_ONORM', 'HAS_BIAS'],
     **autotune_cache_kwargs,
 )
 @triton.jit
@@ -179,6 +195,7 @@ def attnres_bwd_kernel_dv(
     do,
     dres,    # int64 [L]; data_ptr() of each per-source dv allocation
     dqw,
+    db_partial,
     dow_partial,
     N,
     scale: tl.constexpr,
@@ -187,6 +204,7 @@ def attnres_bwd_kernel_dv(
     BL: tl.constexpr,
     BD: tl.constexpr,
     HAS_ONORM: tl.constexpr,
+    HAS_BIAS: tl.constexpr,
     DTYPE: tl.constexpr,
 ):
     i_n = tl.program_id(0).to(tl.int64)
@@ -272,7 +290,10 @@ def attnres_bwd_kernel_dv(
     # [1]
     b_delta = tl.sum(b_p * b_dp, axis=0)
     # [BL]
-    b_ds = b_p * (b_dp - b_delta) * scale
+    b_dlogits = b_p * (b_dp - b_delta)
+    b_ds = b_dlogits * scale
+    if HAS_BIAS:
+        tl.store(db_partial + i_n * L + o_l, b_dlogits, mask=m_l)
 
     for i_d in range(0, D, BD):
         # [BD]
@@ -380,12 +401,14 @@ def _build_ptr_table(tensors: Sequence[torch.Tensor]) -> torch.Tensor:
 
 def fused_attnres_fwd(
     q: torch.Tensor,
+    bias: torch.Tensor | None,
     residuals: Sequence[torch.Tensor],
     res: torch.Tensor,
     w: torch.Tensor,
     ow: torch.Tensor | None,
     eps: float,
     scale: float,
+    top_k: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
     if not residuals[0].is_cuda:
         raise ValueError("Triton attnres requires CUDA tensors")
@@ -413,6 +436,7 @@ def fused_attnres_fwd(
     BL = max(8, triton.next_power_of_2(L))
     attnres_fwd_kernel[(N,)](
         q=q,
+        bias=bias,
         res=res,
         w=w,
         o=o,
@@ -428,6 +452,8 @@ def fused_attnres_fwd(
         scale=scale,
         BL=BL,
         HAS_ONORM=has_onorm,
+        HAS_BIAS=bias is not None,
+        TOP_K=top_k,
         DTYPE=DTYPE,
     )
 
@@ -437,6 +463,7 @@ def fused_attnres_fwd(
 def fused_attnres_bwd(
     do: torch.Tensor,
     q: torch.Tensor,
+    bias: torch.Tensor | None,
     residuals: Sequence[torch.Tensor],
     res: torch.Tensor,
     w: torch.Tensor,
@@ -446,7 +473,7 @@ def fused_attnres_bwd(
     score_mean: torch.Tensor,
     o_rstd: torch.Tensor | None,
     scale: float,
-) -> tuple[list[torch.Tensor], torch.Tensor, torch.Tensor, torch.Tensor | None]:
+) -> tuple[list[torch.Tensor], torch.Tensor | None, torch.Tensor, torch.Tensor, torch.Tensor | None]:
     L, N, D = len(residuals), do.numel() // do.shape[-1], do.shape[-1]
     dtype = residuals[0].dtype
     DTYPE = _TORCH_TO_TL_DTYPE[dtype]
@@ -462,6 +489,10 @@ def fused_attnres_bwd(
         dow = torch.empty_like(ow)
     else:
         dow_partial = dow = None
+    if bias is not None:
+        db_partial = torch.empty((N, L), device=do.device, dtype=torch.float32)
+    else:
+        db_partial = None
 
     dvs = [torch.empty_like(r) for r in residuals]
     dres = _build_ptr_table(dvs)
@@ -482,6 +513,7 @@ def fused_attnres_bwd(
         do=do,
         dres=dres,
         dqw=dqw,
+        db_partial=db_partial,
         dow_partial=dow_partial,
         N=N,
         scale=scale,
@@ -489,6 +521,7 @@ def fused_attnres_bwd(
         D=D,
         BL=BL,
         HAS_ONORM=has_onorm,
+        HAS_BIAS=bias is not None,
         DTYPE=DTYPE,
     )
 
@@ -506,7 +539,8 @@ def fused_attnres_bwd(
         HAS_ONORM=has_onorm,
     )
 
-    return dvs, dq, dw, dow
+    db = db_partial.sum(dim=0).to(dtype=bias.dtype) if bias is not None else None
+    return dvs, db, dq, dw, dow
 
 
 class FusedAttnresFunction(torch.autograd.Function):
@@ -517,25 +551,30 @@ class FusedAttnresFunction(torch.autograd.Function):
     def forward(
         ctx,
         query: torch.Tensor,
+        bias: torch.Tensor | None,
         rms_weight: torch.Tensor,
         output_rms_weight: torch.Tensor | None,
         rms_eps: float,
         scale: float,
+        top_k: int,
         *residuals: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # `res` is built once here and threaded through fwd/bwd so neither internal wrapper rebuilds it.
         # for small N, the H2D copy plus cudaMemcpy launch is ~tens of µs, comparable to the kernel itself.
         res = _build_ptr_table(residuals)
+        ctx.top_k = top_k
         o, p, rstd, score_mean, o_rstd = fused_attnres_fwd(
             q=query,
+            bias=bias,
             residuals=residuals,
             res=res,
             w=rms_weight,
             ow=output_rms_weight,
             eps=rms_eps,
             scale=scale,
+            top_k=ctx.top_k,
         )
-        ctx.save_for_backward(query, rms_weight, output_rms_weight, p, rstd, score_mean, o_rstd, *residuals)
+        ctx.save_for_backward(query, bias, rms_weight, output_rms_weight, p, rstd, score_mean, o_rstd, *residuals)
         ctx.scale = scale
         ctx.res = res
         ctx.mark_non_differentiable(p)
@@ -550,10 +589,11 @@ class FusedAttnresFunction(torch.autograd.Function):
         dp: torch.Tensor | None = None,
     ):
         del dp
-        query, rms_weight, output_rms_weight, p, rstd, score_mean, o_rstd, *residuals = ctx.saved_tensors
-        dvs, dq, dw, dow = fused_attnres_bwd(
+        query, bias, rms_weight, output_rms_weight, p, rstd, score_mean, o_rstd, *residuals = ctx.saved_tensors
+        dvs, db, dq, dw, dow = fused_attnres_bwd(
             do=do,
             q=query,
+            bias=bias,
             residuals=residuals,
             res=ctx.res,
             w=rms_weight,
@@ -565,17 +605,19 @@ class FusedAttnresFunction(torch.autograd.Function):
             scale=ctx.scale,
         )
         # gradient order matches the forward signature:
-        # query, rms_weight, output_rms_weight, rms_eps (None), scale (None), *residuals.
-        return (dq, dw, dow, None, None, *dvs)
+        # query, bias, rms_weight, output_rms_weight, rms_eps (None), scale (None), top_k (None), *residuals.
+        return (dq, db, dw, dow, None, None, None, *dvs)
 
 
 def fused_attnres(
     query: torch.Tensor,
     residuals: Sequence[torch.Tensor],
     rms_weight: torch.Tensor,
+    bias: torch.Tensor | None = None,
     output_rms_weight: torch.Tensor | None = None,
     rms_eps: float = 1e-6,
     scale: float = 1.0,
+    topk_fraction: float | None = None,
     return_weights: bool = False,
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     r"""
@@ -596,6 +638,8 @@ def fused_attnres(
             Non-empty sequence of same-dtype, same-`D` residual sources, each of shape `[..., D]`.
         rms_weight (torch.Tensor):
             RMSNorm scale for key normalization of shape `[D]`.
+        bias (torch.Tensor, optional):
+            Per-source bias added to the depth logits before softmax. Default: `None`.
         output_rms_weight (torch.Tensor, optional):
             If set, an extra RMSNorm with this weight is applied to the mixed residual before returning, fusing the
             prenorm that would otherwise follow the AttnRes call (e.g. `attn_norm` / `mlp_norm`). Default: `None`.
@@ -603,6 +647,8 @@ def fused_attnres(
             RMSNorm epsilon (also used for `output_rms_weight` when set). Default: `1e-6`.
         scale (float):
             Scale factor applied to AttnRes logits before softmax. Default: `1.0`.
+        topk_fraction (float, optional):
+            If set, keep only `ceil(topk_fraction * L)` residual sources before softmax. Default: `None`.
         return_weights (bool):
             Whether to return depth softmax probabilities. Default: `False`.
 
@@ -614,13 +660,22 @@ def fused_attnres(
     """
     if len(residuals) == 0:
         raise ValueError("residuals must contain at least one source")
+    if bias is not None and bias.numel() != len(residuals):
+        raise ValueError(f"bias must have length {len(residuals)}, got {bias.numel()}")
+    if topk_fraction is not None and not (0.0 < topk_fraction <= 1.0):
+        raise ValueError(f"topk_fraction must be in (0, 1], got {topk_fraction}")
 
     output_shape = residuals[0].shape
     D = output_shape[-1]
     flat_residuals = tuple(r.reshape(-1, D).contiguous() for r in residuals)
+    top_k = 0
+    if topk_fraction is not None:
+        top_k = min(len(flat_residuals), max(1, math.ceil(len(flat_residuals) * topk_fraction)))
+        if top_k == len(flat_residuals):
+            top_k = 0
 
     o, p = FusedAttnresFunction.apply(
-        query, rms_weight, output_rms_weight, rms_eps, scale, *flat_residuals,
+        query, bias, rms_weight, output_rms_weight, rms_eps, scale, top_k, *flat_residuals,
     )
     o = o.view(output_shape)
 

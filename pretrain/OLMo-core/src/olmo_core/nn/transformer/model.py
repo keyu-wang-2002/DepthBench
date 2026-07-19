@@ -208,9 +208,21 @@ class Transformer(nn.Module):
         if self._attnres_enabled:
             from ..layer_norm import LayerNormConfig, LayerNormType
 
+            attnres_block = next(
+                b for b in self.blocks.values() if getattr(b, "attnres_block_size", None) is not None
+            )
+            self._attnres_use_bias = getattr(attnres_block, "attnres_use_bias", False)
+            self._attnres_learn_logit_scale = getattr(
+                attnres_block, "attnres_learn_logit_scale", False
+            )
+            self._attnres_topk_fraction = getattr(attnres_block, "attnres_topk_fraction", None)
             _ln_cfg = LayerNormConfig(name=LayerNormType.rms, bias=False)
             self.res_proj = nn.Linear(d_model, 1, bias=False, device=init_device)
             self.res_norm = _ln_cfg.build(d_model, init_device=init_device)
+            if self._attnres_use_bias:
+                self.res_bias = nn.Parameter(torch.zeros(2 * n_layers + 1, device=init_device))
+            if self._attnres_learn_logit_scale:
+                self.final_attnres_logit_scale = nn.Parameter(torch.zeros((), device=init_device))
 
         self.init_device = init_device
         self.init_method = InitMethod(init_method)
@@ -252,6 +264,10 @@ class Transformer(nn.Module):
         if not self._attnres_enabled:
             return
         nn.init.zeros_(self.res_proj.weight)
+        if hasattr(self, "res_bias"):
+            nn.init.zeros_(self.res_bias)
+        if hasattr(self, "final_attnres_logit_scale"):
+            nn.init.zeros_(self.final_attnres_logit_scale)
         for block in self.blocks.values():
             reset_attnres_parameters = getattr(block, "reset_attnres_parameters", None)
             if reset_attnres_parameters is not None:
@@ -650,11 +666,15 @@ class Transformer(nn.Module):
             residuals = [*attnres_states, h]
             lm_norm = self.lm_head.norm if self.lm_head is not None else None
             h = fused_attnres(
-                query=self.res_proj.weight,
+                query=self.res_proj.weight
+                if not hasattr(self, "final_attnres_logit_scale")
+                else self.res_proj.weight * self.final_attnres_logit_scale.exp(),
                 residuals=residuals,
                 rms_weight=self.res_norm.weight,
+                bias=self.res_bias[: len(residuals)] if hasattr(self, "res_bias") else None,
                 output_rms_weight=lm_norm.weight if lm_norm is not None else None,
                 rms_eps=self.res_norm.eps,
+                topk_fraction=self._attnres_topk_fraction,
             )
 
         # Get final logits but again pass-through in case of pipeline parallelism.

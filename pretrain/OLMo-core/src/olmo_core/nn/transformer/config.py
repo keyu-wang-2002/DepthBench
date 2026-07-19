@@ -367,6 +367,18 @@ class TransformerBlockConfig(ModuleConfig):
     accumulated across layers within groups of this size via learned gates, then added back
     at group boundaries. ``None`` disables AttnRes.
     """
+    attnres_use_bias: bool = False
+    """
+    Add a learned per-source bias to AttnRes depth logits.
+    """
+    attnres_learn_logit_scale: bool = False
+    """
+    Learn a per-AttnRes aggregation logit scale initialized to 0, applied as ``exp(logit_scale)``.
+    """
+    attnres_topk_fraction: Optional[float] = None
+    """
+    If set, keep ``ceil(attnres_topk_fraction * num_sources)`` AttnRes sources before softmax.
+    """
     hyper_connections: Optional[HyperConnectionsConfig] = None
     """Residual routing configuration for HC and mHC block types."""
 
@@ -731,12 +743,29 @@ class TransformerConfig(ModelConfig):
                 # AttnRes adds MLP residual projection/norm in every block and
                 # attention residual projection/norm after the first block.
                 num_params += 2 * self.d_model
+                if block_config.attnres_use_bias:
+                    num_params += 2 * block_idx + 2
+                if block_config.attnres_learn_logit_scale:
+                    num_params += 1
                 if block_idx > 0:
                     num_params += 2 * self.d_model
+                    if block_config.attnres_use_bias:
+                        num_params += 2 * block_idx + 1
+                    if block_config.attnres_learn_logit_scale:
+                        num_params += 1
 
         if has_attnres:
             # Final AttnRes aggregation projection/norm before the LM head.
             num_params += 2 * self.d_model
+            first_attnres_block = next(
+                block_config
+                for block_config in self.resolved_block_configs
+                if block_config.name == TransformerBlockType.attnres
+            )
+            if first_attnres_block.attnres_use_bias:
+                num_params += 2 * self.n_layers + 1
+            if first_attnres_block.attnres_learn_logit_scale:
+                num_params += 1
 
         # LM head.
         num_params += self.lm_head.num_params(self.d_model, self.vocab_size)
@@ -1789,6 +1818,9 @@ class TransformerConfig(ModelConfig):
 
         residual_scaling_base_depth = kwargs.pop("residual_scaling_base_depth", None)
         attnres_block_size = kwargs.pop("attnres_block_size", None)
+        attnres_use_bias = kwargs.pop("attnres_use_bias", False)
+        attnres_learn_logit_scale = kwargs.pop("attnres_learn_logit_scale", False)
+        attnres_topk_fraction = kwargs.pop("attnres_topk_fraction", None)
 
         # Configure blocks.
         block = TransformerBlockConfig(
@@ -1818,6 +1850,9 @@ class TransformerConfig(ModelConfig):
             layer_norm=layer_norm,
             residual_scaling_base_depth=residual_scaling_base_depth,
             attnres_block_size=attnres_block_size,
+            attnres_use_bias=attnres_use_bias,
+            attnres_learn_logit_scale=attnres_learn_logit_scale,
+            attnres_topk_fraction=attnres_topk_fraction,
         )
 
         if block_mods and kwargs.get("block_overrides"):

@@ -684,16 +684,23 @@ class AttnResTransformerBlock(TransformerBlock):
         *,
         d_model: int,
         block_idx: int,
+        n_layers: int,
         attnres_block_size: int = 1,
+        attnres_use_bias: bool = False,
+        attnres_learn_logit_scale: bool = False,
+        attnres_topk_fraction: Optional[float] = None,
         layer_norm: LayerNormConfig,
         init_device: str = "cpu",
         **kwargs,
     ):
         if attnres_block_size <= 0:
             raise ValueError(f"attnres_block_size must be positive, got {attnres_block_size}")
+        if attnres_topk_fraction is not None and not (0.0 < attnres_topk_fraction <= 1.0):
+            raise ValueError(f"attnres_topk_fraction must be in (0, 1], got {attnres_topk_fraction}")
         super().__init__(
             d_model=d_model,
             block_idx=block_idx,
+            n_layers=n_layers,
             layer_norm=layer_norm,
             init_device=init_device,
             **kwargs,
@@ -702,13 +709,24 @@ class AttnResTransformerBlock(TransformerBlock):
         from ..layer_norm import LayerNormType
 
         self.attnres_block_size = attnres_block_size
+        self.attnres_use_bias = attnres_use_bias
+        self.attnres_learn_logit_scale = attnres_learn_logit_scale
+        self.attnres_topk_fraction = attnres_topk_fraction
         _rms_cfg = LayerNormConfig(name=LayerNormType.rms, bias=False)
         if block_idx > 0:
             self.attn_res_proj = nn.Linear(d_model, 1, bias=False, device=init_device)
             self.attn_res_norm = _rms_cfg.build(d_model, init_device=init_device)
             nn.init.zeros_(self.attn_res_proj.weight)
+            if attnres_use_bias:
+                self.attn_res_bias = nn.Parameter(torch.zeros(2 * block_idx + 1, device=init_device))
+            if attnres_learn_logit_scale:
+                self.attnres_logit_scale = nn.Parameter(torch.zeros((), device=init_device))
         self.mlp_res_proj = nn.Linear(d_model, 1, bias=False, device=init_device)
         self.mlp_res_norm = _rms_cfg.build(d_model, init_device=init_device)
+        if attnres_use_bias:
+            self.mlp_res_bias = nn.Parameter(torch.zeros(2 * block_idx + 2, device=init_device))
+        if attnres_learn_logit_scale:
+            self.mlp_attnres_logit_scale = nn.Parameter(torch.zeros((), device=init_device))
         self.attnres_is_attn_boundary = (2 * block_idx) % attnres_block_size == 0
         self.attnres_is_mlp_boundary = (2 * block_idx + 1) % attnres_block_size == 0
         self.reset_attnres_parameters()
@@ -716,7 +734,23 @@ class AttnResTransformerBlock(TransformerBlock):
     def reset_attnres_parameters(self) -> None:
         if hasattr(self, "attn_res_proj"):
             nn.init.zeros_(self.attn_res_proj.weight)
+        if hasattr(self, "attn_res_bias"):
+            nn.init.zeros_(self.attn_res_bias)
+        if hasattr(self, "attnres_logit_scale"):
+            nn.init.zeros_(self.attnres_logit_scale)
         nn.init.zeros_(self.mlp_res_proj.weight)
+        if hasattr(self, "mlp_res_bias"):
+            nn.init.zeros_(self.mlp_res_bias)
+        if hasattr(self, "mlp_attnres_logit_scale"):
+            nn.init.zeros_(self.mlp_attnres_logit_scale)
+
+    @staticmethod
+    def _attnres_bias(param: Optional[torch.Tensor], n_residuals: int) -> Optional[torch.Tensor]:
+        return param[:n_residuals] if param is not None else None
+
+    @staticmethod
+    def _attnres_query(query: torch.Tensor, logit_scale: Optional[torch.Tensor]) -> torch.Tensor:
+        return query if logit_scale is None else query * logit_scale.exp()
 
     def forward(
         self,
@@ -740,11 +774,15 @@ class AttnResTransformerBlock(TransformerBlock):
                 attnres_states = residuals
                 prefix_sum = None
             h_normed = fused_attnres(
-                query=self.attn_res_proj.weight,
+                query=self._attnres_query(
+                    self.attn_res_proj.weight, getattr(self, "attnres_logit_scale", None)
+                ),
                 residuals=residuals,
                 rms_weight=self.attn_res_norm.weight,
+                bias=self._attnres_bias(getattr(self, "attn_res_bias", None), len(residuals)),
                 output_rms_weight=self.attention_norm.weight,
                 rms_eps=self.attn_res_norm.eps,
+                topk_fraction=self.attnres_topk_fraction,
             )
 
         attn_out = self.attention(h_normed, **kwargs)
@@ -755,11 +793,15 @@ class AttnResTransformerBlock(TransformerBlock):
             attnres_states = mlp_residuals
             prefix_sum = None
         h_normed = fused_attnres(
-            query=self.mlp_res_proj.weight,
+            query=self._attnres_query(
+                self.mlp_res_proj.weight, getattr(self, "mlp_attnres_logit_scale", None)
+            ),
             residuals=mlp_residuals,
             rms_weight=self.mlp_res_norm.weight,
+            bias=self._attnres_bias(getattr(self, "mlp_res_bias", None), len(mlp_residuals)),
             output_rms_weight=self.feed_forward_norm.weight,
             rms_eps=self.mlp_res_norm.eps,
+            topk_fraction=self.attnres_topk_fraction,
         )
 
         mlp_out = self.feed_forward(h_normed)

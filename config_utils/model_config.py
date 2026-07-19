@@ -40,6 +40,9 @@ DIRECT_LLAMA_LIKE_KEYS = {
     "block_name",
     "residual_scaling_base_depth",
     "attnres_block_size",
+    "attnres_use_bias",
+    "attnres_learn_logit_scale",
+    "attnres_topk_fraction",
 }
 
 
