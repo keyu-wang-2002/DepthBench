@@ -25,6 +25,22 @@ while `--mhc-backend=mhc` selects the experimental input-dependent PyTorch
 backend. Liger mHC requires a CUDA environment with compatible recent PyTorch
 and Triton versions.
 
+For the current 400M-tier shape experiments, use the repo-relative runner. It
+defaults to 7,600 steps, global batch size 512, checkpoints every 3,000 steps,
+and a single full evaluation at the final step:
+
+```bash
+METHOD=hc SHAPE=L16 LEARNING_RATE=2e-3 \
+  bash examples/pretrain_hyper_connections_shape.sh
+
+METHOD=mhc SHAPE=L24 LEARNING_RATE=2e-3 MHC_BACKEND=liger_mhc \
+  bash examples/pretrain_hyper_connections_shape.sh
+```
+
+Override `DATA_ROOT`, `SAVE_ROOT`, `NPROC_PER_NODE`, and
+`DEVICE_MICROBATCH_SIZE` for the local cluster layout. The runner supports the
+L16, L20, L24, L26, L28, L30, and L32 configs.
+
 The Liger backend matches the paper's per-sublayer routing equations, but the
 default DepthBench experiment is not a bit-for-bit reproduction of the paper's
 system implementation. It keeps `phi` in BF16 for Tensor Core throughput,
