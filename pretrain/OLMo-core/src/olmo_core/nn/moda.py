@@ -114,7 +114,9 @@ class MoDAAttention(nn.Module):
             self._parallel_moda = _load_parallel_moda(self.moda.backend)
         return self._parallel_moda
 
-    def _project_qkv(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _project_qkv(
+        self, x: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         B, T, _ = x.shape
         q = self.attention.w_q(x)
         k = self.attention.w_k(x)
@@ -125,6 +127,8 @@ class MoDAAttention(nn.Module):
             k.clamp_(min=-self.attention.clip_qkv, max=self.attention.clip_qkv)
             v.clamp_(min=-self.attention.clip_qkv, max=self.attention.clip_qkv)
 
+        raw_k = k
+
         if not self.attention.use_head_qk_norm:
             if self.attention.q_norm is not None:
                 q = self.attention.q_norm(q)
@@ -134,6 +138,7 @@ class MoDAAttention(nn.Module):
         q = q.view(B, T, -1, self.head_dim)
         k = k.view(B, T, -1, self.head_dim)
         v = v.view(B, T, -1, self.head_dim)
+        raw_k = raw_k.view(B, T, -1, self.head_dim)
 
         if self.attention.use_head_qk_norm:
             if self.attention.q_norm is not None:
@@ -141,7 +146,7 @@ class MoDAAttention(nn.Module):
             if self.attention.k_norm is not None:
                 k = self.attention.k_norm(k)
 
-        return q, k, v
+        return q, k, v, raw_k
 
     def normalize_cache_k(self, k: torch.Tensor) -> torch.Tensor:
         if self.attention.k_norm is None:
@@ -193,9 +198,17 @@ class MoDAAttention(nn.Module):
     def _extract_cached_kv(self, buf_k: torch.Tensor, buf_v: torch.Tensor, current_depth: int):
         if current_depth <= 0:
             return None, None
-        B, T, _, h_kv, d = buf_k.shape
-        cached_k = buf_k[:, :, :current_depth].reshape(B, T * current_depth, h_kv, d)
-        cached_v = buf_v[:, :, :current_depth].reshape(B, T * current_depth, h_kv, d)
+        B, T, max_depth, h_kv, d = buf_k.shape
+        if current_depth > max_depth:
+            raise RuntimeError(
+                f"MoDA current depth {current_depth} exceeds max depth {max_depth}"
+            )
+
+        # Keep the preallocated max-depth layout. Slicing before reshape copies
+        # every populated slot because the depth stride remains max_depth,
+        # defeating the v17 kernel's O(1)-allocation cache design.
+        cached_k = buf_k.reshape(B, T * max_depth, h_kv, d)
+        cached_v = buf_v.reshape(B, T * max_depth, h_kv, d)
         return cached_k, cached_v
 
     def _depth_attention(
@@ -260,12 +273,12 @@ class MoDAAttention(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         del max_depth
         B, T, C = x.shape
-        q, k, v = self._project_qkv(x)
+        q, k, v, raw_k = self._project_qkv(x)
 
         if self.moda.cache_post_norm_k and self.attention.k_norm is not None:
             k_for_cache = k
         else:
-            k_for_cache = self.attention.w_k(x).view(B, T, -1, self.head_dim)
+            k_for_cache = raw_k
         v_for_cache = v
 
         q, k = self._apply_rope(q, k, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis)

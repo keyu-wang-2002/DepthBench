@@ -127,6 +127,99 @@ def test_tiny_moda_forward_backward_with_fake_kernel(block_name: str):
     assert all(grad is not None and torch.isfinite(grad).all() for grad in depth_kv_grads)
 
 
+def test_moda_reuses_sequence_key_projection_for_depth_cache():
+    def fake_depth_attention(q, k, v, *, cached_k, cached_v, **kwargs):
+        del k, v, cached_k, cached_v, kwargs
+        return q
+
+    config = TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=128,
+        n_layers=2,
+        n_heads=4,
+        n_kv_heads=4,
+        hidden_size_multiple_of=8,
+        dtype=DType.float32,
+        block_name=TransformerBlockType.moda,
+        moda=MoDAConfig(),
+    )
+    model = config.build()
+    model.init_weights(device=torch.device("cpu"))
+
+    call_counts = {name: 0 for name in model.blocks}
+    handles = []
+    for name, block in model.blocks.items():
+        block.attention._parallel_moda = fake_depth_attention
+
+        def count_key_projection(_module, _inputs, _output, *, block_name=name):
+            call_counts[block_name] += 1
+
+        handles.append(block.attention.attention.w_k.register_forward_hook(count_key_projection))
+
+    try:
+        model(input_ids=torch.randint(0, config.vocab_size, (2, 8)))
+    finally:
+        for handle in handles:
+            handle.remove()
+
+    assert call_counts == {"0": 1, "1": 1}
+
+
+def test_moda_passes_full_preallocated_depth_cache_to_v17_kernel():
+    kernel_calls = []
+
+    def fake_depth_attention(q, k, v, *, cached_k, cached_v, current_depth, **kwargs):
+        del k, v, kwargs
+        kernel_calls.append(
+            {
+                "cached_k_shape": cached_k.shape,
+                "cached_v_shape": cached_v.shape,
+                "current_depth": current_depth,
+                "cached_k_is_view": cached_k._base is not None,
+                "cached_v_is_view": cached_v._base is not None,
+            }
+        )
+        return q
+
+    config = TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=128,
+        n_layers=3,
+        n_heads=4,
+        n_kv_heads=4,
+        hidden_size_multiple_of=8,
+        dtype=DType.float32,
+        block_name=TransformerBlockType.moda,
+        moda=MoDAConfig(backend="v17"),
+    )
+    model = config.build()
+    model.init_weights(device=torch.device("cpu"))
+    for block in model.blocks.values():
+        block.attention._parallel_moda = fake_depth_attention
+
+    batch_size, sequence_length = 2, 8
+    model(input_ids=torch.randint(0, config.vocab_size, (batch_size, sequence_length)))
+
+    max_depth = 2 * config.n_layers
+    expected_shape = (batch_size, sequence_length * max_depth, 4, 16)
+    assert kernel_calls == [
+        {
+            "cached_k_shape": expected_shape,
+            "cached_v_shape": expected_shape,
+            "current_depth": 2,
+            "cached_k_is_view": True,
+            "cached_v_is_view": True,
+        },
+        {
+            "cached_k_shape": expected_shape,
+            "cached_v_shape": expected_shape,
+            "current_depth": 4,
+            "cached_k_is_view": True,
+            "cached_v_is_view": True,
+        },
+    ]
+
+
 @pytest.mark.parametrize(
     ("block_type", "backend", "expected_class"),
     [
