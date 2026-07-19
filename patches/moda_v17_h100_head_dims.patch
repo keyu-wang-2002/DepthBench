@@ -9,7 +9,7 @@ index eae993b..7379983 100644
 -        BV = min(64, max(16, triton.next_power_of_2(V)))
 +        BV = min(128, max(16, triton.next_power_of_2(V)))
          num_warps = 2
- 
+
 -    if customized_BT is not None:
 -        BT = customized_BT
 -    if customized_BS is not None:
@@ -22,7 +22,7 @@ index eae993b..7379983 100644
 -        num_warps = customized_num_warps
 -
      device_id = q.device.index
- 
+
 -    if is_target_gpu(device_id, "H800"):
 +    if is_target_gpu(device_id, "H800") or is_target_gpu(device_id, "H100"):
          BT = 64
@@ -33,7 +33,7 @@ index eae993b..7379983 100644
 +        BK = min(256, max(64, triton.next_power_of_2(K)))
 +        BV = min(256, max(64, triton.next_power_of_2(V)))
          num_warps = 4
- 
+
      elif is_target_gpu(device_id, "H20"):
          BT = 64
 -        BS = 64
@@ -43,7 +43,7 @@ index eae993b..7379983 100644
 +        BK = min(256, max(64, triton.next_power_of_2(K)))
 +        BV = min(256, max(64, triton.next_power_of_2(V)))
          num_warps = 4
- 
+
      elif is_target_gpu(device_id, "A100"):
          BT = 64
 -        BS = 64
@@ -53,7 +53,7 @@ index eae993b..7379983 100644
 +        BK = min(256, max(64, triton.next_power_of_2(K)))
 +        BV = min(128, max(64, triton.next_power_of_2(V)))
          num_warps = 4
- 
+
 -    else:
 -        print("Target GPU is not optimized")
 +    # Other GPUs retain the architecture-aware defaults selected from their
@@ -71,7 +71,7 @@ index eae993b..7379983 100644
 +        BV = customized_BV
 +    if customized_num_warps is not None:
 +        num_warps = customized_num_warps
- 
+
      assert (
          BT % moda_group_num == 0
 @@ -547,7 +549,7 @@ def parallel_moda_fwd(
@@ -80,7 +80,7 @@ index eae993b..7379983 100644
      NT = triton.cdiv(TQ, BT) if cu_seqlens is None else len(chunk_indices)
 -    assert NK == 1, "The key dimension can not be larger than 256"
 +    assert NK == 1, f"BK={BK} must cover key head dimension K={K}"
- 
+
      o = torch.empty(B, TQ, HQ, V, dtype=v.dtype, device=q.device)
      lse = torch.empty(B, TQ, HQ, dtype=torch.float, device=q.device)
 @@ -1611,27 +1613,16 @@ def parallel_moda_bwd(
@@ -90,7 +90,7 @@ index eae993b..7379983 100644
 -        BV = min(max(triton.next_power_of_2(V), 16), 64)
 +        BV = min(max(triton.next_power_of_2(V), 16), 128)
          num_warps = 2
- 
+
 -    if customized_BT is not None:
 -        BT = customized_BT
 -    if customized_BS is not None:
@@ -103,7 +103,7 @@ index eae993b..7379983 100644
 -        num_warps = customized_num_warps
 -
      device_id = q.device.index
- 
+
 -    if is_target_gpu(device_id, "H800"):
 -        BT = 128
 +    if is_target_gpu(device_id, "H800") or is_target_gpu(device_id, "H100"):
@@ -140,7 +140,7 @@ index eae993b..7379983 100644
              128,
 @@ -1667,7 +1658,7 @@ def parallel_moda_bwd(
          )
- 
+
      else:
 -        print("Target GPU is not optimized")
 +        # Generic Ampere/Hopper/Blackwell defaults were selected above.
@@ -150,7 +150,7 @@ index eae993b..7379983 100644
 @@ -1675,6 +1666,24 @@ def parallel_moda_bwd(
              4,
          )
- 
+
 +    # Explicit tuning arguments take precedence over per-device defaults.
 +    if customized_BT is not None:
 +        BT = customized_BT
