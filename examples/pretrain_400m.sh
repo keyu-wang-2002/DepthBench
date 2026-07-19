@@ -7,7 +7,7 @@ torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "example
     --tokenizer-name-or-path="pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
     --seed=42 --max-steps=7600 --global-train-batch-size=512 \
     --device-train-microbatch-size=4 --learning-rate=2e-3 --warmup-steps=760 \
-    --eval-interval=200 --save-interval=3000 \
+    --eval-interval=7600 --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-prenorm-moda-400M-lr2e-3"
 
 # Post-norm baseline and paper-aligned post-norm MoDA use the same common arguments.
@@ -17,7 +17,7 @@ torchrun --nproc_per_node=8 --master_port=35101 --master_addr=localhost "example
     --tokenizer-name-or-path="pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
     --seed=42 --max-steps=7600 --global-train-batch-size=512 \
     --device-train-microbatch-size=16 --learning-rate=2e-3 --warmup-steps=760 \
-    --eval-interval=200 --save-interval=3000 \
+    --eval-interval=7600 --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-postnorm-400M-lr2e-3"
 
 torchrun --nproc_per_node=8 --master_port=35102 --master_addr=localhost "examples/pretrain_postnorm_moda.py" \
@@ -26,7 +26,7 @@ torchrun --nproc_per_node=8 --master_port=35102 --master_addr=localhost "example
     --tokenizer-name-or-path="pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
     --seed=42 --max-steps=7600 --global-train-batch-size=512 \
     --device-train-microbatch-size=4 --learning-rate=2e-3 --warmup-steps=760 \
-    --eval-interval=200 --save-interval=3000 \
+    --eval-interval=7600 --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-postnorm-moda-400M-lr2e-3"
 
 # Pre-LN
