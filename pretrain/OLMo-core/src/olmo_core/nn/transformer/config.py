@@ -213,7 +213,7 @@ class HyperConnectionsConfig(Config):
 
     kind: HyperConnectionsKind = HyperConnectionsKind.hc
     num_residual_streams: int = 4
-    tanh: bool = True
+    tanh: Optional[bool] = None
     gating_factor_init: float = 0.01
     sinkhorn_iters: int = 20
     sinkhorn_tau: float = 1.0
@@ -275,7 +275,7 @@ class HyperConnectionsConfig(Config):
             dim=dim,
             branch=branch,
             layer_index=layer_index,
-            tanh=self.tanh,
+            tanh=self.use_tanh,
             gating_factor_init=self.gating_factor_init,
             sinkhorn_iters=self.sinkhorn_iters,
             sinkhorn_tau=self.sinkhorn_tau,
@@ -305,6 +305,14 @@ class HyperConnectionsConfig(Config):
         else:
             names = ("pre_bias", "post_bias", "residual_bias")
         return [f"{module_pattern}.{name}" for name in names]
+
+    @property
+    def use_tanh(self) -> bool:
+        if self.tanh is not None:
+            return self.tanh
+        # HC uses the tanh parameterization from Eq. (5), while mHC Eq. (7)
+        # uses an unconstrained linear projection before the manifold maps.
+        return self.kind == HyperConnectionsKind.hc
 
     @property
     def reduce_mode(self) -> str:
@@ -469,7 +477,7 @@ class TransformerBlockConfig(ModuleConfig):
                 return HCTransformerBlock(hyper_connections=hyper_connections, **kwargs)
             elif self.name == TransformerBlockType.mhc:
                 hyper_connections = hyper_connections or HyperConnectionsConfig(
-                    kind=HyperConnectionsKind.mhc_static
+                    kind=HyperConnectionsKind.mhc
                 )
                 if hyper_connections.kind not in {
                     HyperConnectionsKind.mhc,
@@ -543,7 +551,7 @@ class TransformerBlockConfig(ModuleConfig):
                     kind=(
                         HyperConnectionsKind.hc
                         if self.name == TransformerBlockType.hc
-                        else HyperConnectionsKind.mhc_static
+                        else HyperConnectionsKind.mhc
                     )
                 )
             block_params += 2 * hyper_connections.num_params(d_model)

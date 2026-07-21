@@ -7,7 +7,7 @@ torchrun --nproc_per_node=4 --master_port=35100 --master_addr=localhost "example
     --tokenizer-name-or-path="pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
     --seed=42 --max-steps=7600 --global-train-batch-size=512 \
     --device-train-microbatch-size=8 --learning-rate=2e-3 --warmup-steps=760 \
-    --eval-interval=200 --save-interval=3000 \
+    --eval-interval=7600 --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-hc-400M-lr2e-3"
 
 # Manifold-constrained Hyper-Connections (fused Liger backend)
@@ -18,7 +18,7 @@ torchrun --nproc_per_node=4 --master_port=35101 --master_addr=localhost "example
     --tokenizer-name-or-path="pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
     --seed=42 --max-steps=7600 --global-train-batch-size=512 \
     --device-train-microbatch-size=8 --learning-rate=2e-3 --warmup-steps=760 \
-    --eval-interval=200 --save-interval=3000 \
+    --eval-interval=7600 --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-mhc-400M-lr2e-3"
 
 # Pre-LN

@@ -437,9 +437,9 @@ class HyperConnection(nn.Module):
             torch.matmul(normed, self.dynamic_beta_proj)
         )
         branch_to_streams = branch_output.unsqueeze(-2) * beta.unsqueeze(-1)
-        # HC uses stream mixing only to form the branch input. The depth connection adds the
-        # branch output back to the original residual streams, matching the reference implementation.
-        output = self.dropout(residuals + _flatten_from_streams(branch_to_streams))
+        # The remaining width-mixed columns are A_r^T H in the paper's depth connection.
+        output_streams = mixed[..., 1:, :] + branch_to_streams
+        output = self.dropout(_flatten_from_streams(output_streams))
 
         return tree_unflatten((output, *rest), tree_spec)
 
@@ -469,7 +469,11 @@ class HyperConnection(nn.Module):
 
         h_pre = torch.sigmoid(pre_tilde)
         h_post = 2.0 * torch.sigmoid(post_tilde)
-        h_res = sinkhorn_log(residual_tilde, num_iters=self.sinkhorn_iters)
+        h_res = sinkhorn_log(
+            residual_tilde,
+            num_iters=self.sinkhorn_iters,
+            tau=self.sinkhorn_tau,
+        )
 
         branch_input = torch.einsum("...s,...sd->...d", h_pre, streams_fp32).to(streams.dtype)
         mixed_residuals = torch.einsum("...st,...sd->...td", h_res, streams_fp32)

@@ -660,13 +660,8 @@ class Transformer(nn.Module):
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
             if self._hyper_connection_enabled:
-                if self._hyper_connection_reduce_mode == "mean":
-                    h = self.reduce_residual_streams(h)
-                else:
-                    if self.lm_head.norm is not None:
-                        h = self.lm_head.norm(h)
-                    h = self.reduce_residual_streams(h)
-                    lm_head_kwargs["skip_norm"] = True
+                # Collapse HC / mHC streams before the final normalization.
+                h = self.reduce_residual_streams(h)
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
                 if labels is not None:
