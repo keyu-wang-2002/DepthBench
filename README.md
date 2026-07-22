@@ -4,6 +4,8 @@
 
 ## Environment Setup
 
+Note: need newer torch version for AttnRes, mHC, MoDA, etc. (will be modified at last)
+
 ```bash
 python -m venv depthbench
 source depthbench/bin/activate
@@ -91,9 +93,22 @@ Example:
 
 ```bash
 cd ./examples
-bash pretrain_llama_350M_base.sh
-bash pretrain_llama_1B_base.sh
+bash pretrain_400m.sh
 ```
+
+
+Our implementatios:
+- Pre-LN
+- Pre-LN: depth-muP, completeP
+- Peri-LN (Sandwich-LN)
+- LNS
+- DeepNorm
+- KEEL
+- AttnRes
+- HC
+- mHC
+- MoDA (Pre-norm, Post-norm)
+
 
 Note: DepthBench now supports per-layer monitoring of hidden-state statistics during pretraining. For each transformer block, we record statistics for both `forward`, the block output hidden state,
 and `backward`, the activation gradient on the same hidden state.
