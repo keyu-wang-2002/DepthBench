@@ -11,6 +11,8 @@ from olmo_core.nn.transformer import TransformerBlockType
 
 def build_config(args, overrides: List[str]) -> base.ExperimentConfig:
     config = base.build_config(args, overrides)
+    if config.model.block.hyper_connections is not None or config.model.block.moda is not None:
+        raise ValueError("The post-norm baseline cannot be combined with HC, mHC, or MoDA")
     config.model.block.name = TransformerBlockType.post_norm
     return config
 

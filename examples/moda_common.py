@@ -12,6 +12,8 @@ from olmo_core.nn.transformer import (
 def configure_moda(config, *, post_norm: bool) -> None:
     if not isinstance(config.model.block, TransformerBlockConfig):
         raise TypeError("MoDA examples require a single dense TransformerBlockConfig")
+    if config.model.block.hyper_connections is not None:
+        raise ValueError("MoDA experiments cannot be combined with HC or mHC")
 
     moda = MoDAConfig(
         backend="v17",

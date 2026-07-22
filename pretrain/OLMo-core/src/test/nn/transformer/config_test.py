@@ -1,10 +1,12 @@
 import json
 
+import pytest
 from cached_path import cached_path
 
 from olmo_core.generate.generation_module.transformer.generation_module import (
     _set_attention_backend,
 )
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer.config import (
     HyperConnectionsConfig,
@@ -113,3 +115,37 @@ def test_attention_backend_override_does_not_change_moda_backend():
 
     assert config.block.sequence_mixer.backend == AttentionBackendName.torch
     assert config.block.moda.backend == "v17"
+
+
+def test_moda_and_hyper_connection_configs_are_mutually_exclusive():
+    hc_config = TransformerConfig.llama_like(
+        d_model=128,
+        vocab_size=32000,
+        n_layers=2,
+        n_heads=8,
+        block_name=TransformerBlockType.hc,
+        moda=MoDAConfig(),
+    )
+    with pytest.raises(OLMoConfigurationError, match="only valid for MoDA"):
+        hc_config.build()
+
+    moda_config = TransformerConfig.llama_like(
+        d_model=128,
+        vocab_size=32000,
+        n_layers=2,
+        n_heads=8,
+        block_name=TransformerBlockType.moda,
+    )
+    moda_config.block.hyper_connections = HyperConnectionsConfig(kind="hc")
+    with pytest.raises(OLMoConfigurationError, match="only valid for HC and mHC"):
+        moda_config.build()
+
+    default_config = TransformerConfig.llama_like(
+        d_model=128,
+        vocab_size=32000,
+        n_layers=2,
+        n_heads=8,
+    )
+    default_config.block.moda_skip_ffn_kv = True
+    with pytest.raises(OLMoConfigurationError, match="only valid for MoDA"):
+        default_config.build()

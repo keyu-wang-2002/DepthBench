@@ -478,11 +478,13 @@ class TransformerBlockConfig(ModuleConfig):
             raise OLMoConfigurationError("'hyper_connections' is only valid for HC and mHC blocks")
         moda = kwargs.pop("moda", None)
         moda_skip_ffn_kv = kwargs.pop("moda_skip_ffn_kv", False)
-        if moda is not None and self.name not in {
+        if (moda is not None or moda_skip_ffn_kv) and self.name not in {
             TransformerBlockType.moda,
             TransformerBlockType.post_norm_moda,
         }:
-            raise OLMoConfigurationError("'moda' is only valid for MoDA block types")
+            raise OLMoConfigurationError(
+                "'moda' and 'moda_skip_ffn_kv' are only valid for MoDA block types"
+            )
         kwargs.update(
             d_model=d_model,
             block_idx=block_idx,

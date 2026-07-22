@@ -41,6 +41,7 @@ from olmo_core.nn.transformer import (
     HyperConnectionsConfig,
     MHCTransformerBlock,
     MoDAConfig,
+    MoDATransformerBlock,
     MoEHybridTransformerBlockBase,
     MoEReorderedNormTransformerBlock,
     MoETransformer,
@@ -63,6 +64,42 @@ from olmo_core.testing.utils import FLA_MARKS, has_fla
 from olmo_core.utils import get_default_device, seed_all
 
 log = logging.getLogger(__name__)
+
+
+def test_moda_and_hyper_connection_blocks_are_structurally_independent():
+    hc_config = TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=128,
+        n_layers=2,
+        n_heads=4,
+        n_kv_heads=4,
+        hidden_size_multiple_of=8,
+        dtype=DType.float32,
+        block_name=TransformerBlockType.hc,
+    )
+    hc_config.block.hyper_connections = HyperConnectionsConfig(kind="hc")
+    hc_block = hc_config.build().blocks["0"]
+    assert isinstance(hc_block, HCTransformerBlock)
+    assert not hasattr(hc_block.attention, "moda")
+    assert hasattr(hc_block, "attention_hyper_connection")
+    assert not hasattr(hc_block, "attention_residual_stream")
+
+    moda_config = TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=128,
+        n_layers=2,
+        n_heads=4,
+        n_kv_heads=4,
+        hidden_size_multiple_of=8,
+        dtype=DType.float32,
+        block_name=TransformerBlockType.moda,
+        moda=MoDAConfig(),
+    )
+    moda_block = moda_config.build().blocks["0"]
+    assert isinstance(moda_block, MoDATransformerBlock)
+    assert hasattr(moda_block.attention, "moda")
+    assert not hasattr(moda_block, "attention_hyper_connection")
+    assert hasattr(moda_block, "attention_residual_stream")
 
 
 @pytest.mark.parametrize("block_name", ["post_norm", "moda", "post_norm_moda"])

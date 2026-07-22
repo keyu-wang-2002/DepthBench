@@ -7,6 +7,11 @@ hyper-connection backend:
 - `moda`: pre-norm MoDA for comparison against the standard pre-norm baseline.
 - `post_norm_moda`: paper-aligned post-norm MoDA.
 
+MoDA and HC/mHC are independent experiment lines. MoDA blocks use OLMo-core's
+standard residual streams and never construct hyper-connection modules; HC/mHC
+blocks remain unchanged and never construct MoDA attention. Cross-configuring
+`moda` on an HC/mHC block or `hyper_connections` on a MoDA block is rejected.
+
 The MoDA blocks reuse each attention layer's Q/K/V/O projections, add FFN K/V
 projections for the depth cache, and call the official Triton depth-attention
 kernel after the first attention sublayer. The final FFN K/V projection is
