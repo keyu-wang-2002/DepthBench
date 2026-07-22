@@ -101,7 +101,7 @@ class TransformerBlockType(StrEnum):
 
     Our implementatios:
     - Pre-LN
-    - depth-muP, completeP
+    - Pre-LN: depth-muP, completeP
     - Peri-LN (Sandwich-LN)
     - LNS
     - DeepNorm
