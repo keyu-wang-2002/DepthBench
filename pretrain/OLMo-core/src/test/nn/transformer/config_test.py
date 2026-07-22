@@ -2,6 +2,12 @@ import json
 
 from cached_path import cached_path
 
+from olmo_core.generate.generation_module.transformer.generation_module import (
+    _set_attention_backend,
+)
+from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.transformer.config import (
+    MoDAConfig,
 from olmo_core.nn.transformer.config import (
     HyperConnectionsConfig,
     HyperConnectionsKind,
@@ -32,12 +38,16 @@ def test_load_olmo3_7b_config():
     assert roundtripped.as_config_dict() == config.as_config_dict()
 
 
+def test_roundtrip_with_moda_block_config():
 def test_roundtrip_with_hyper_connections():
     config = TransformerConfig.llama_like(
         d_model=128,
         vocab_size=32000,
         n_layers=2,
         n_heads=8,
+        n_kv_heads=8,
+        block_name=TransformerBlockType.post_norm_moda,
+        moda=MoDAConfig(backend="v17", depth_bs=64, depth_warps=4),
         block_name=TransformerBlockType.mhc,
     )
     config.block.hyper_connections = HyperConnectionsConfig(
@@ -53,6 +63,7 @@ def test_roundtrip_with_hyper_connections():
     assert roundtripped.as_config_dict() == config.as_config_dict()
 
 
+def test_attention_backend_override_does_not_change_moda_backend():
 def test_hyper_connection_activation_defaults_match_paper_parameterizations():
     assert HyperConnectionsConfig(kind="hc").use_tanh
     assert not HyperConnectionsConfig(kind="mhc").use_tanh
@@ -66,6 +77,14 @@ def test_legacy_default_block_with_hyper_connections_is_migrated():
         vocab_size=32000,
         n_layers=2,
         n_heads=8,
+        block_name=TransformerBlockType.moda,
+        moda=MoDAConfig(backend="v17"),
+    )
+
+    _set_attention_backend(config, AttentionBackendName.torch)
+
+    assert config.block.sequence_mixer.backend == AttentionBackendName.torch
+    assert config.block.moda.backend == "v17"
     )
     config_dict = config.as_config_dict()
     config_dict["block"]["hyper_connections"] = HyperConnectionsConfig(

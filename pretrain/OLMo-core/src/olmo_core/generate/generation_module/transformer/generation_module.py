@@ -32,7 +32,7 @@ from olmo_core.generate.generation_module import GenerationConfig, GenerationMod
 from olmo_core.generate.sampling import select_next_token
 from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
-from olmo_core.nn.attention import Attention, AttentionBackendName
+from olmo_core.nn.attention import Attention, AttentionBackendName, SequenceMixerConfig
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
@@ -41,6 +41,19 @@ from olmo_core.train.train_module.transformer.config import (
 from olmo_core.utils import gc_cuda, get_default_device, log_or_print, move_to_device
 
 log = logging.getLogger(__name__)
+
+
+def _set_attention_backend(
+    transformer_config: TransformerConfig, attention_backend: AttentionBackendName
+) -> None:
+    def set_backend(config):
+        mixer = getattr(config, "sequence_mixer", None) or getattr(config, "attention", None)
+        if mixer is None and isinstance(config, SequenceMixerConfig):
+            mixer = config
+        if mixer is not None and hasattr(mixer, "backend"):
+            setattr(mixer, "backend", attention_backend)
+
+    transformer_config.apply(set_backend)
 
 
 class TransformerGenerationModule(GenerationModule):
@@ -486,15 +499,7 @@ class TransformerGenerationModule(GenerationModule):
 
         if attention_backend is not None:
             attention_backend.assert_supported()
-
-            def set_attention_backend(c):
-                mixer = getattr(c, "sequence_mixer", None) or getattr(c, "attention", None)
-                if mixer is None and hasattr(c, "backend"):
-                    mixer = c
-                if mixer is not None and hasattr(mixer, "backend"):
-                    setattr(mixer, "backend", attention_backend)
-
-            transformer_config.apply(set_attention_backend)
+            _set_attention_backend(transformer_config, attention_backend)
 
         log_or_print(log, f"{transformer_config}")
         log_or_print(log, f"{generation_config}")

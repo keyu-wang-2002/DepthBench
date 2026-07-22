@@ -380,6 +380,13 @@ class Transformer(nn.Module):
                     std=self.init_std,
                     generator=generator,
                 )
+                if hasattr(block.feed_forward, "init_depth_kv_weights"):
+                    block.feed_forward.init_depth_kv_weights(
+                        init_method=self.init_method,
+                        d_model=self.d_model,
+                        std=self.init_std,
+                        generator=generator,
+                    )
 
             if self._hyper_connection_enabled and self._hyper_connection_scale_output_init:
                 scale = math.sqrt(self._hyper_connection_num_streams)
@@ -634,7 +641,7 @@ class Transformer(nn.Module):
             block_kwargs = per_block_kwargs.get(block_idx, {})
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
-                mark_dynamic(h, (0, 1), strict=False)
+                mark_dynamic(h[0] if isinstance(h, tuple) else h, (0, 1), strict=False)
             if self._attnres_enabled:
                 h, attnres_states = block(
                     h, attnres_states=attnres_states, **all_block_kwargs, **block_kwargs
@@ -642,6 +649,14 @@ class Transformer(nn.Module):
             else:
                 h = block(h, **all_block_kwargs, **block_kwargs)
             if self._layer_stats_collector is not None:
+                h_for_stats = h[0] if isinstance(h, tuple) else h
+                observed_h = self._layer_stats_collector.observe_hidden_state(
+                    f"block_{block_idx:02d}", h_for_stats
+                )
+                if isinstance(h, tuple):
+                    h = (observed_h, h[1], h[2])
+                else:
+                    h = observed_h
                 h = self._layer_stats_collector.observe_hidden_state(f"block_{block_idx:02d}", h)
 
         if self._attnres_enabled:
@@ -659,6 +674,8 @@ class Transformer(nn.Module):
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
+            if isinstance(h, tuple):
+                h = h[0]
             if self._hyper_connection_enabled:
                 # Collapse HC / mHC streams before the final normalization.
                 h = self.reduce_residual_streams(h)
