@@ -8,6 +8,9 @@ from olmo_core.generate.generation_module.transformer.generation_module import (
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer.config import (
     MoDAConfig,
+from olmo_core.nn.transformer.config import (
+    HyperConnectionsConfig,
+    HyperConnectionsKind,
     TransformerBlockConfig,
     TransformerBlockType,
     TransformerConfig,
@@ -36,6 +39,7 @@ def test_load_olmo3_7b_config():
 
 
 def test_roundtrip_with_moda_block_config():
+def test_roundtrip_with_hyper_connections():
     config = TransformerConfig.llama_like(
         d_model=128,
         vocab_size=32000,
@@ -44,6 +48,14 @@ def test_roundtrip_with_moda_block_config():
         n_kv_heads=8,
         block_name=TransformerBlockType.post_norm_moda,
         moda=MoDAConfig(backend="v17", depth_bs=64, depth_warps=4),
+        block_name=TransformerBlockType.mhc,
+    )
+    config.block.hyper_connections = HyperConnectionsConfig(
+        kind="liger_mhc",
+        num_residual_streams=4,
+        gating_factor_init=0.01,
+        sinkhorn_iters=20,
+        liger_phi_dtype="bfloat16",
     )
 
     roundtripped = TransformerConfig.from_dict(config.as_config_dict())
@@ -52,6 +64,14 @@ def test_roundtrip_with_moda_block_config():
 
 
 def test_attention_backend_override_does_not_change_moda_backend():
+def test_hyper_connection_activation_defaults_match_paper_parameterizations():
+    assert HyperConnectionsConfig(kind="hc").use_tanh
+    assert not HyperConnectionsConfig(kind="mhc").use_tanh
+    assert not HyperConnectionsConfig(kind="liger_mhc").use_tanh
+    assert HyperConnectionsConfig(kind="mhc", tanh=True).use_tanh
+
+
+def test_legacy_default_block_with_hyper_connections_is_migrated():
     config = TransformerConfig.llama_like(
         d_model=128,
         vocab_size=32000,
@@ -65,3 +85,13 @@ def test_attention_backend_override_does_not_change_moda_backend():
 
     assert config.block.sequence_mixer.backend == AttentionBackendName.torch
     assert config.block.moda.backend == "v17"
+    )
+    config_dict = config.as_config_dict()
+    config_dict["block"]["hyper_connections"] = HyperConnectionsConfig(
+        kind="liger_mhc"
+    ).as_config_dict()
+
+    migrated = TransformerConfig.from_dict(config_dict)
+
+    assert migrated.block.name == TransformerBlockType.mhc
+    assert migrated.block.hyper_connections.kind == HyperConnectionsKind.liger_mhc

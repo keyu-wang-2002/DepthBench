@@ -38,6 +38,9 @@ from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
 from olmo_core.nn.rope import RoPEConfig
 from olmo_core.nn.transformer import (
     MoDAConfig,
+    HCTransformerBlock,
+    HyperConnectionsConfig,
+    MHCTransformerBlock,
     MoEHybridTransformerBlockBase,
     MoEReorderedNormTransformerBlock,
     MoETransformer,
@@ -215,6 +218,80 @@ def test_moda_passes_full_preallocated_depth_cache_to_v17_kernel():
             "cached_v_is_view": True,
         },
     ]
+
+
+@pytest.mark.parametrize(
+    ("block_type", "backend", "expected_class"),
+    [
+        (TransformerBlockType.hc, "hc", HCTransformerBlock),
+        (TransformerBlockType.mhc, "mhc", MHCTransformerBlock),
+    ],
+)
+def test_hyper_connections_tiny_model(block_type, backend, expected_class):
+    config = TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=128,
+        n_layers=2,
+        n_heads=4,
+        hidden_size_multiple_of=8,
+        block_name=block_type,
+    )
+    config.block.hyper_connections = HyperConnectionsConfig(
+        kind=backend,
+        num_residual_streams=4,
+        sinkhorn_iters=4,
+    )
+    model = config.build()
+    model.init_weights(device=torch.device("cpu"))
+
+    block = model.blocks["0"]
+    assert isinstance(block, expected_class)
+    assert not hasattr(block, "attention_residual_stream")
+    logits = model(torch.randint(0, 128, (2, 8)), return_logits=True)
+    logits.square().mean().backward()
+
+    assert logits.shape == (2, 8, 128)
+    assert all(p.grad is None or torch.isfinite(p.grad).all() for p in model.parameters())
+
+
+def test_hc_collapses_streams_before_final_norm():
+    config = TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=128,
+        n_layers=2,
+        n_heads=4,
+        hidden_size_multiple_of=8,
+        block_name=TransformerBlockType.hc,
+    )
+    config.block.hyper_connections = HyperConnectionsConfig(
+        kind="hc",
+        num_residual_streams=4,
+    )
+    model = config.build()
+    model.init_weights(device=torch.device("cpu"))
+    assert model.lm_head is not None and model.lm_head.norm is not None
+
+    captured = {}
+
+    def capture_block_output(_module, _inputs, output):
+        captured["streams"] = output.detach()
+
+    def capture_norm_input(_module, inputs):
+        captured["norm_input"] = inputs[0].detach()
+
+    last_block_handle = model.blocks[str(config.n_layers - 1)].register_forward_hook(
+        capture_block_output
+    )
+    norm_handle = model.lm_head.norm.register_forward_pre_hook(capture_norm_input)
+    try:
+        model(torch.randint(0, config.vocab_size, (2, 8)), return_logits=True)
+    finally:
+        last_block_handle.remove()
+        norm_handle.remove()
+
+    expected = model.reduce_residual_streams(captured["streams"])
+    assert captured["norm_input"].shape == (2, 8, config.d_model)
+    torch.testing.assert_close(captured["norm_input"], expected)
 
 
 @pytest.mark.parametrize(

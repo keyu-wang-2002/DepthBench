@@ -105,11 +105,11 @@ class TransformerBlockType(StrEnum):
     - Peri-LN (Sandwich-LN)
     - LNS
     - DeepNorm
-    - KEEL: TODO
+    - KEEL
     - AttnRes
-    - HC: TODO
-    - mHC: TODO
-    - MoDA
+    - HC
+    - mHC
+    - MoDA (Pre-norm, Post-norm)
     """
 
     default = "default"
@@ -156,6 +156,21 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`AttnResTransformerBlock`.
     """
 
+    hc = "hc"
+    """
+    ➡️ :class:`HCTransformerBlock`.
+    """
+
+    mhc = "mhc"
+    """
+    ➡️ :class:`MHCTransformerBlock`.
+    """
+
+    keel = "keel"
+    """
+    ➡️ :class:`KeelTransformerBlock`.
+    """
+
     default_depth_scaled = "default_depth_scaled"
     """
     ➡️ :class:`LayerNormDepthScaledTransformerBlock` (scales by total model depth)
@@ -190,6 +205,129 @@ class TransformerBlockType(StrEnum):
     """
     ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
     """
+
+
+class HyperConnectionsKind(StrEnum):
+    """Residual routing backends for HC and mHC blocks."""
+
+    hc = "hc"
+    mhc = "mhc"
+    mhc_static = "mhc_static"
+    liger_mhc = "liger_mhc"
+
+
+@dataclass
+class HyperConnectionsConfig(Config):
+    """Configuration shared by the HC and mHC transformer blocks."""
+
+    kind: HyperConnectionsKind = HyperConnectionsKind.hc
+    num_residual_streams: int = 4
+    tanh: Optional[bool] = None
+    gating_factor_init: float = 0.01
+    sinkhorn_iters: int = 20
+    sinkhorn_tau: float = 1.0
+    disable_static_weight_decay: bool = True
+    scale_output_init_by_sqrt_n: bool = True
+    liger_phi_dtype: DType = DType.bfloat16
+    liger_allow_fp32: bool = False
+    liger_rms_eps: float = 1e-6
+    liger_pre_eps: float = 0.0
+    liger_sinkhorn_eps: float = 1e-6
+    liger_post_mult: float = 2.0
+    collapse: str = "auto"
+
+    def __post_init__(self):
+        if isinstance(self.kind, str):
+            self.kind = HyperConnectionsKind(self.kind)
+        if isinstance(self.liger_phi_dtype, str):
+            self.liger_phi_dtype = DType(self.liger_phi_dtype)
+        if self.num_residual_streams < 1:
+            raise OLMoConfigurationError("'num_residual_streams' must be positive")
+        if self.sinkhorn_iters < 1:
+            raise OLMoConfigurationError("'sinkhorn_iters' must be positive")
+        if self.collapse not in {"auto", "sum", "mean"}:
+            raise OLMoConfigurationError(
+                "'collapse' for hyper_connections must be one of: auto, sum, mean"
+            )
+
+    def build(
+        self,
+        *,
+        dim: int,
+        branch,
+        layer_index: int,
+        init_device: str,
+        dtype,
+    ):
+        from ..hyper_connections import HyperConnection, LigerHyperConnection
+
+        if self.kind == HyperConnectionsKind.liger_mhc:
+            return LigerHyperConnection(
+                num_residual_streams=self.num_residual_streams,
+                dim=dim,
+                branch=branch,
+                gating_factor_init=self.gating_factor_init,
+                sinkhorn_iters=self.sinkhorn_iters,
+                init_device=init_device,
+                dtype=dtype,
+                phi_dtype=self.liger_phi_dtype.as_pt(),
+                allow_fp32=self.liger_allow_fp32,
+                rms_eps=self.liger_rms_eps,
+                pre_eps=self.liger_pre_eps,
+                sinkhorn_eps=self.liger_sinkhorn_eps,
+                post_mult=self.liger_post_mult,
+            )
+
+        return HyperConnection(
+            kind=self.kind.value,
+            num_residual_streams=self.num_residual_streams,
+            dim=dim,
+            branch=branch,
+            layer_index=layer_index,
+            tanh=self.use_tanh,
+            gating_factor_init=self.gating_factor_init,
+            sinkhorn_iters=self.sinkhorn_iters,
+            sinkhorn_tau=self.sinkhorn_tau,
+            init_device=init_device,
+            dtype=dtype,
+        )
+
+    def num_params(self, d_model: int) -> int:
+        n = self.num_residual_streams
+        if self.kind == HyperConnectionsKind.hc:
+            return (n * (n + 1)) + (d_model * (n + 1)) + 1 + n + d_model + 1
+        if self.kind == HyperConnectionsKind.mhc_static:
+            return (n * n) + n + n
+        if self.kind == HyperConnectionsKind.liger_mhc:
+            return (d_model * n * ((n * n) + (2 * n))) + ((n * n) + (2 * n)) + 3
+
+        flat_dim = d_model * n
+        return (flat_dim * n) + (flat_dim * n) + (flat_dim * n * n) + 3 + n + n + (n * n)
+
+    def static_parameter_patterns(self, module_pattern: str) -> list[str]:
+        if self.kind == HyperConnectionsKind.hc:
+            names = ("static_alpha", "static_beta")
+        elif self.kind == HyperConnectionsKind.mhc_static:
+            names = ("H_res_logits", "H_pre_logits", "H_post_logits")
+        elif self.kind == HyperConnectionsKind.liger_mhc:
+            names = ("b", "alpha_pre", "alpha_post", "alpha_res")
+        else:
+            names = ("pre_bias", "post_bias", "residual_bias")
+        return [f"{module_pattern}.{name}" for name in names]
+
+    @property
+    def use_tanh(self) -> bool:
+        if self.tanh is not None:
+            return self.tanh
+        # HC uses the tanh parameterization from Eq. (5), while mHC Eq. (7)
+        # uses an unconstrained linear projection before the manifold maps.
+        return self.kind == HyperConnectionsKind.hc
+
+    @property
+    def reduce_mode(self) -> str:
+        if self.collapse == "auto":
+            return "mean" if self.kind == HyperConnectionsKind.liger_mhc else "sum"
+        return self.collapse
 
 
 @dataclass
@@ -273,6 +411,8 @@ class TransformerBlockConfig(ModuleConfig):
     """Depth-attention configuration for pre- or post-norm MoDA blocks."""
     moda_skip_ffn_kv: bool = False
     """Skip the unused FFN depth K/V projection in the final MoDA block."""
+    hyper_connections: Optional[HyperConnectionsConfig] = None
+    """Residual routing configuration for HC and mHC block types."""
 
     def __post_init__(self, attention: Optional[AttentionConfig] = None):
         # Handle backwards compatibility: old configs used `attention` instead of `sequence_mixer`.
@@ -286,6 +426,14 @@ class TransformerBlockConfig(ModuleConfig):
         if self.sequence_mixer is UNSET:
             raise OLMoConfigurationError(
                 "TransformerBlockConfig requires 'sequence_mixer' to be set."
+            )
+        # HC/mHC checkpoints created before dedicated block registration encoded the
+        # connector on an otherwise-default block. Preserve their architecture on load.
+        if self.name == TransformerBlockType.default and self.hyper_connections is not None:
+            self.name = (
+                TransformerBlockType.hc
+                if self.hyper_connections.kind == HyperConnectionsKind.hc
+                else TransformerBlockType.mhc
             )
 
     def build(
@@ -301,6 +449,8 @@ class TransformerBlockConfig(ModuleConfig):
             AttnResTransformerBlock,
             DeepNormTransformerBlock,
             DepthScaledTransformerBlock,
+            HCTransformerBlock,
+            KeelTransformerBlock,
             LayerNormDepthScaledTransformerBlock,
             LayerNormScaledTransformerBlock,
             MoEHybridReorderedNormTransformerBlock,
@@ -308,6 +458,7 @@ class TransformerBlockConfig(ModuleConfig):
             MoEReorderedNormTransformerBlock,
             MoETransformerBlock,
             MoDATransformerBlock,
+            MHCTransformerBlock,
             NormalizedTransformerBlock,
             PeriNormTransformerBlock,
             PostNormMoDATransformerBlock,
@@ -326,6 +477,12 @@ class TransformerBlockConfig(ModuleConfig):
             TransformerBlockType.post_norm_moda,
         }:
             raise OLMoConfigurationError("'moda' is only valid for MoDA block types")
+        hyper_connections = kwargs.pop("hyper_connections", None)
+        if hyper_connections is not None and self.name not in {
+            TransformerBlockType.hc,
+            TransformerBlockType.mhc,
+        }:
+            raise OLMoConfigurationError("'hyper_connections' is only valid for HC and mHC blocks")
         kwargs.update(
             d_model=d_model,
             block_idx=block_idx,
@@ -367,6 +524,28 @@ class TransformerBlockConfig(ModuleConfig):
             elif self.name == TransformerBlockType.attnres:
                 kwargs.setdefault("attnres_block_size", 1)
                 return AttnResTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.hc:
+                hyper_connections = hyper_connections or HyperConnectionsConfig(
+                    kind=HyperConnectionsKind.hc
+                )
+                if hyper_connections.kind != HyperConnectionsKind.hc:
+                    raise OLMoConfigurationError("HC blocks require hyper_connections.kind='hc'")
+                return HCTransformerBlock(hyper_connections=hyper_connections, **kwargs)
+            elif self.name == TransformerBlockType.mhc:
+                hyper_connections = hyper_connections or HyperConnectionsConfig(
+                    kind=HyperConnectionsKind.mhc
+                )
+                if hyper_connections.kind not in {
+                    HyperConnectionsKind.mhc,
+                    HyperConnectionsKind.mhc_static,
+                    HyperConnectionsKind.liger_mhc,
+                }:
+                    raise OLMoConfigurationError(
+                        "mHC blocks require kind 'mhc', 'mhc_static', or 'liger_mhc'"
+                    )
+                return MHCTransformerBlock(hyper_connections=hyper_connections, **kwargs)
+            elif self.name == TransformerBlockType.keel:
+                return KeelTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.default_scaled:
                 return LayerNormScaledTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.default_depth_scaled:
@@ -394,7 +573,7 @@ class TransformerBlockConfig(ModuleConfig):
                 f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
             ) from e
 
-    def num_params(self, d_model: int) -> int:
+    def num_params(self, d_model: int, block_idx: Optional[int] = None) -> int:
         block_params = 0
 
         # Block attn and MLP scaling factors.
@@ -434,11 +613,26 @@ class TransformerBlockConfig(ModuleConfig):
             block_params += 2 * d_model * n_kv_heads * head_dim
             if bias:
                 block_params += 2 * n_kv_heads * head_dim
+        if self.name in {TransformerBlockType.hc, TransformerBlockType.mhc}:
+            hyper_connections = self.hyper_connections
+            if hyper_connections is None:
+                hyper_connections = HyperConnectionsConfig(
+                    kind=(
+                        HyperConnectionsKind.hc
+                        if self.name == TransformerBlockType.hc
+                        else HyperConnectionsKind.mhc
+                    )
+                )
+            block_params += 2 * hyper_connections.num_params(d_model)
+        if self.name == TransformerBlockType.keel:
+            assert self.layer_norm is not None
+            extra_norms = 1 if block_idx == 0 else 2
+            block_params += extra_norms * self.layer_norm.num_params(d_model)
 
         return block_params
 
-    def num_active_params(self, d_model: int) -> int:
-        num_params = self.num_params(d_model)
+    def num_active_params(self, d_model: int, block_idx: Optional[int] = None) -> int:
+        num_params = self.num_params(d_model, block_idx=block_idx)
         if self.feed_forward_moe is None:
             return num_params
 
@@ -608,7 +802,7 @@ class TransformerConfig(ModelConfig):
         # All block params.
         has_attnres = False
         for block_idx, block_config in enumerate(self.resolved_block_configs):
-            num_params += block_config.num_params(self.d_model)
+            num_params += block_config.num_params(self.d_model, block_idx=block_idx)
             if block_config.name == TransformerBlockType.attnres:
                 has_attnres = True
                 # AttnRes adds MLP residual projection/norm in every block and
@@ -639,8 +833,10 @@ class TransformerConfig(ModelConfig):
             num_active_params += self.embedding_norm.num_params(self.d_model)
 
         # All block active params.
-        for block_config in self.resolved_block_configs:
-            num_active_params += block_config.num_active_params(self.d_model)
+        for block_idx, block_config in enumerate(self.resolved_block_configs):
+            num_active_params += block_config.num_active_params(
+                self.d_model, block_idx=block_idx
+            )
 
         # LM head.
         num_active_params += self.lm_head.num_params(self.d_model, self.vocab_size)
@@ -1969,9 +2165,9 @@ class TransformerConfig(ModelConfig):
             raise OLMoConfigurationError(
                 "Cannot use `with_rope_scaling` with a hybrid model with named blocks."
             )
-        assert isinstance(
-            new_config.block.sequence_mixer, AttentionConfig
-        ), "Sequence mixer must be an attention config for RoPE scaling"
+        assert isinstance(new_config.block.sequence_mixer, AttentionConfig), (
+            "Sequence mixer must be an attention config for RoPE scaling"
+        )
         if new_config.block.sequence_mixer.rope is None:
             raise ValueError("Cannot apply RoPE scaling to a model without RoPE.")
         if new_config.block_overrides:
@@ -2004,7 +2200,6 @@ class TransformerConfig(ModelConfig):
         new_config.block_overrides = overrides or None
         return new_config
 
-
     @classmethod
     def llama_1B_backbone(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
@@ -2019,7 +2214,9 @@ class TransformerConfig(ModelConfig):
             n_heads=kwargs.pop("n_heads", 32),
             rope_theta=kwargs.pop("rope_theta", 10_000),
             layer_norm_eps=kwargs.pop("layer_norm_eps", 1e-6),
-            hidden_size_multiple_of=kwargs.pop("hidden_size_multiple_of", 1), # make intermediate_size = 5461
+            hidden_size_multiple_of=kwargs.pop(
+                "hidden_size_multiple_of", 1
+            ),  # make intermediate_size = 5461
             dtype=kwargs.pop("dtype", DType.bfloat16),
             init_std=kwargs.pop("init_std", 0.02),
             **kwargs,
@@ -2051,7 +2248,6 @@ class TransformerConfig(ModelConfig):
             ),
             **kwargs,
         )
-
 
     @classmethod
     def llama_130M_backbone(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
@@ -2106,7 +2302,6 @@ class TransformerConfig(ModelConfig):
             ),
             **kwargs,
         )
-
 
 
 def validate_block_resolution_config(

@@ -28,6 +28,27 @@ torchrun --nproc_per_node=8 --master_port=35102 --master_addr=localhost "example
     --device-train-microbatch-size=4 --learning-rate=2e-3 --warmup-steps=760 \
     --eval-interval=7600 --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-postnorm-moda-400M-lr2e-3"
+    
+# Hyper-Connections (HC)
+torchrun --nproc_per_node=4 --master_port=35100 --master_addr=localhost "examples/pretrain_hc.py" \
+    --run_name=pretrain-hc-400M-lr2e-3 \
+    --model-config="configs/llama_400m_L24.json" \
+    --tokenizer-name-or-path="pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
+    --seed=42 --max-steps=7600 --global-train-batch-size=512 \
+    --device-train-microbatch-size=8 --learning-rate=2e-3 --warmup-steps=760 \
+    --eval-interval=7600 --save-interval=3000 \
+    --save-folder="ckpt/depthbench/pretrain-hc-400M-lr2e-3"
+
+# Manifold-constrained Hyper-Connections (fused Liger backend)
+torchrun --nproc_per_node=4 --master_port=35101 --master_addr=localhost "examples/pretrain_mhc.py" \
+    --mhc-backend=liger_mhc \
+    --run_name=pretrain-mhc-400M-lr2e-3 \
+    --model-config="configs/llama_400m_L24.json" \
+    --tokenizer-name-or-path="pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
+    --seed=42 --max-steps=7600 --global-train-batch-size=512 \
+    --device-train-microbatch-size=8 --learning-rate=2e-3 --warmup-steps=760 \
+    --eval-interval=7600 --save-interval=3000 \
+    --save-folder="ckpt/depthbench/pretrain-mhc-400M-lr2e-3"
 
 # Pre-LN
 torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "examples/pretrain_preln.py" \
@@ -185,6 +206,24 @@ torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "example
     --eval-interval=200 \
     --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-deepnorm-400M-lr2e-3" \
+    --enable-layer-stats \
+    --layer-stats-interval 1
+
+
+# KEEL
+torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "examples/pretrain_keel.py" \
+    --run_name=pretrain-keel-400M-lr2e-3 \
+    --model-config="configs/llama_400m_L24.json" \
+    --tokenizer-name-or-path="pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
+    --seed=42 \
+    --max-steps=7600 \
+    --global-train-batch-size=512 \
+    --device-train-microbatch-size=16 \
+    --learning-rate=2e-3 \
+    --warmup-steps=760 \
+    --eval-interval=200 \
+    --save-interval=3000 \
+    --save-folder="ckpt/depthbench/pretrain-keel-400M-lr2e-3" \
     --enable-layer-stats \
     --layer-stats-interval 1
 
