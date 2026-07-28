@@ -4,7 +4,7 @@ import torch
 
 try:
     import fla
-except ImportError:
+except (ImportError, RuntimeError):
     fla = None
 
 

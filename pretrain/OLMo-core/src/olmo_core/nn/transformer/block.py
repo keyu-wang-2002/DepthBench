@@ -22,10 +22,12 @@ from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
 from ..moe import MoEConfig, MoERouter
 from ..moe.parallel_mlp import ParallelMLPBase
+from ..moda import MoDAAttention, MoDAFeedForwardDepthCache
 from ..residual_stream import ResidualStream
 from .config import (
     HyperConnectionsConfig,
     HyperConnectionsKind,
+    MoDAConfig,
     TransformerDataParallelWrappingStrategy,
 )
 
@@ -257,6 +259,205 @@ class TransformerBlock(TransformerBlockBase):
         attn_flops = self.attention.num_flops_per_token(seq_len)
         ff_flops = self.feed_forward.num_flops_per_token(seq_len)
         return attn_flops + ff_flops
+
+
+class PostNormTransformerBlock(TransformerBlock):
+    """Dense post-norm baseline used for the paper-aligned MoDA comparison."""
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        del loss_div_factor
+        h = self.attention_norm(self.attention_residual_stream(x, self.attention(x, **kwargs)))
+        return self.feed_forward_norm(self.feed_forward_residual_stream(h, self.feed_forward(h)))
+
+
+class MoDABlockMixin:
+    d_model: int
+    block_idx: int
+    n_layers: int
+    max_depth: int
+    attention: MoDAAttention
+
+    def _unpack_moda_state(
+        self, x: torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if isinstance(x, tuple):
+            return x
+        batch_size, seq_len, _ = x.shape
+        shape = (
+            batch_size,
+            seq_len,
+            self.max_depth,
+            self.attention.n_kv_heads,
+            self.attention.head_dim,
+        )
+        buf_k = torch.zeros(shape, dtype=x.dtype, device=x.device)
+        return x, buf_k, torch.zeros_like(buf_k)
+
+    def _pack_moda_state(
+        self, x: torch.Tensor, buf_k: torch.Tensor, buf_v: torch.Tensor
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self.block_idx == self.n_layers - 1:
+            return x
+        return x, buf_k, buf_v
+
+    def apply_tp(
+        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+    ):
+        del tp_mesh, input_layout, float8_enabled
+        raise NotImplementedError("Tensor/sequence parallelism is not implemented for MoDA blocks")
+
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
+    ):
+        del cp_mesh, ring, uly
+        raise NotImplementedError("Context parallelism is not implemented for MoDA blocks")
+
+    def apply_fsdp(
+        self,
+        dp_mesh: Optional[DeviceMesh] = None,
+        prefetch_factor: int = 0,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+        **fsdp_kwargs,
+    ):
+        del prefetch_factor, wrapping_strategy
+        fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
+
+
+class MoDATransformerBlock(MoDABlockMixin, TransformerBlockBase):
+    """Pre-norm dense transformer block with Mixture-of-Depths Attention."""
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        n_layers: int,
+        sequence_mixer: SequenceMixerConfig,
+        feed_forward: FeedForwardConfig,
+        layer_norm: LayerNormConfig,
+        moda: MoDAConfig,
+        skip_ffn_kv: bool = False,
+        dropout: float = 0.0,
+        attention_residual_alpha: float = 1.0,
+        feed_forward_residual_alpha: float = 1.0,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ):
+        super().__init__(n_layers=n_layers)
+        self.d_model = d_model
+        self.block_idx = block_idx
+        self.max_depth = 2 * n_layers
+
+        attention = sequence_mixer.build(
+            d_model,
+            layer_idx=block_idx,
+            n_layers=n_layers,
+            init_device=init_device,
+            cache=cache,
+        )
+        self.attention = MoDAAttention(attention, moda=moda, block_idx=block_idx, n_layers=n_layers)
+        self.attention_norm = layer_norm.build(d_model, init_device=init_device)
+        base_feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
+        self.feed_forward = MoDAFeedForwardDepthCache(
+            base_feed_forward,
+            d_model=d_model,
+            n_kv_heads=self.attention.n_kv_heads,
+            head_dim=self.attention.head_dim,
+            bias=bool(getattr(attention.w_k, "bias", None) is not None),
+            moda=moda,
+            skip_kv_proj=skip_ffn_kv,
+            init_device=init_device,
+            dtype=next(base_feed_forward.parameters()).dtype,
+        )
+        self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
+        self.attention_residual_stream = ResidualStream(
+            alpha=attention_residual_alpha, dropout=dropout
+        )
+        self.feed_forward_residual_stream = ResidualStream(
+            alpha=feed_forward_residual_alpha, dropout=dropout
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        del loss_div_factor
+        x, buf_k, buf_v = self._unpack_moda_state(x)
+        attn_slot = 2 * self.block_idx
+        attn_out, buf_k, buf_v = self.attention(
+            self.attention_norm(x),
+            buf_k=buf_k,
+            buf_v=buf_v,
+            current_depth=attn_slot,
+            slot=attn_slot,
+            max_depth=self.max_depth,
+            **kwargs,
+        )
+        h = self.attention_residual_stream(x, attn_out)
+        mlp_slot = attn_slot + 1
+        ffn_out, buf_k, buf_v = self.feed_forward(
+            self.feed_forward_norm(h),
+            buf_k=buf_k,
+            buf_v=buf_v,
+            slot=mlp_slot,
+            max_depth=self.max_depth,
+            k_norm_fn=self.attention.normalize_cache_k,
+        )
+        out = self.feed_forward_residual_stream(h, ffn_out)
+        return self._pack_moda_state(out, buf_k, buf_v)
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        return self.attention.num_flops_per_token(seq_len) + self.feed_forward.num_flops_per_token(
+            seq_len
+        )
+
+
+class PostNormMoDATransformerBlock(MoDATransformerBlock):
+    """Paper-aligned post-norm transformer block with MoDA."""
+
+    def forward(
+        self,
+        x: torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        del loss_div_factor
+        x, buf_k, buf_v = self._unpack_moda_state(x)
+        attn_slot = 2 * self.block_idx
+        attn_out, buf_k, buf_v = self.attention(
+            x,
+            buf_k=buf_k,
+            buf_v=buf_v,
+            current_depth=attn_slot,
+            slot=attn_slot,
+            max_depth=self.max_depth,
+            **kwargs,
+        )
+        h = self.attention_norm(self.attention_residual_stream(x, attn_out))
+        mlp_slot = attn_slot + 1
+        ffn_out, buf_k, buf_v = self.feed_forward(
+            h,
+            buf_k=buf_k,
+            buf_v=buf_v,
+            slot=mlp_slot,
+            max_depth=self.max_depth,
+            k_norm_fn=self.attention.normalize_cache_k,
+        )
+        out = self.feed_forward_norm(self.feed_forward_residual_stream(h, ffn_out))
+        return self._pack_moda_state(out, buf_k, buf_v)
 
 
 class HyperConnectionsTransformerBlock(TransformerBlockBase):
