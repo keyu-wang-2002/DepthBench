@@ -71,7 +71,7 @@ The following model configs are currently available under: [`./configs`](./confi
 | 350M | 1024 | 2736 | 16 | 24 | 8B | 512 | 2048 | 7.6k |
 | 1B | 2048 | 5461 | 32 | 24 | 21B | 512 | 2048 | 20k |
 
-### 350M Aspect-Ratio Variants (names in config will be modified to 400M)
+### 400M Aspect-Ratio Variants
 
 | Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Backbone Diff | Total Size | Total Diff |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -91,8 +91,7 @@ Example:
 
 ```bash
 cd ./examples
-bash pretrain_llama_350M_base.sh
-bash pretrain_llama_1B_base.sh
+bash pretrain_400m.sh
 ```
 
 Note: DepthBench now supports per-layer monitoring of hidden-state statistics during pretraining. For each transformer block, we record statistics for both `forward`, the block output hidden state,
