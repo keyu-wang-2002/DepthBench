@@ -83,7 +83,14 @@ The following model configs are currently available under: [`./configs`](./confi
 | 30 | 928 | 2480 | 16 | 58 | 30.93 | 311M | +2.68% | 404M | -0.38% |
 | 32 | 896 | 2400 | 16 | 56 | 28.00 | 309M | +2.26% | 399M | -1.49% |
 
-
+Design Principle
+```
+heads = 16
+head_dim is oven
+hidden = heads * head_dim
+intermediate = ceil(hidden * 8/3, multiple=16)
+Keep total size 405M +- 3%
+```
 
 ## Training Script
 
