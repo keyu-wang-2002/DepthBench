@@ -83,6 +83,13 @@ The following model configs are currently available under: [`./configs`](./confi
 | 30 | 928 | 2480 | 16 | 58 | 30.93 | 311M | +2.68% | 404M | -0.38% |
 | 32 | 896 | 2400 | 16 | 56 | 28.00 | 309M | +2.26% | 399M | -1.49% |
 
+deeper variants
+| Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Backbone Diff | Total Size | Total Diff |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 36 | 864 | 2304 | 16 | 54 | 24.00 | 323M | +6.65% | 409M | +0.99% |
+| 42 | 800 | 2144 | 16 | 50 | 19.05 | 324M | +7.03% | 404M | -0.31% |
+
+
 Design Principle
 ```
 heads = 16
