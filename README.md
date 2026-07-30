@@ -68,7 +68,7 @@ The following model configs are currently available under: [`./configs`](./confi
 
 | Size | Hidden | Intermediate | Heads | Layers | Data Volume | Batch Size | Sequence Length | Steps |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| 350M | 1024 | 2736 | 16 | 24 | 8B | 512 | 2048 | 7.6k |
+| 400M | 1024 | 2736 | 16 | 24 | 8B | 512 | 2048 | 7.6k |
 | 1B | 2048 | 5461 | 32 | 24 | 21B | 512 | 2048 | 20k |
 
 ### 400M Aspect-Ratio Variants
