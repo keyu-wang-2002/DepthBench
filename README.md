@@ -108,6 +108,26 @@ intermediate = ceil(hidden * 8/3, multiple=16)
 Keep total size 405M +- 3%
 ```
 
+### 300M Backbone Aspect-Ratio Variants （Fix Backbone Size）
+
+| Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Backbone Diff | Total Size | 
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | 
+| 16 | 1248 | 3328 | 16 | 78 | 78.00 | 299M | -1.11% | 425M | 
+| 24 | 1024 | 2736 | 16 | 64 | 42.67 | 302M | +0.00% | 405M | 
+| 32 | 896 | 2400 | 16 | 56 | 28.00 | 309M | +2.26% | 399M | 
+| 42 | 768 | 2048 | 16 | 48 | 18.29 | 297M | -1.69% | 375M | 
+| 56 | 672 | 1792 | 16 | 42 | 12.00 | 304M | +0.37% | 371M | 
+| 70 | 608 | 1632 | 16 | 38 | 8.69 | 312M | +3.15% | 373M | 
+
+Design Principle
+```
+heads = 16
+head_dim is oven
+hidden = heads * head_dim
+intermediate = ceil(hidden * 8/3, multiple=16)
+Keep backbone size 302M +- 3%
+```
+
 ## Training Script
 
 Example:
