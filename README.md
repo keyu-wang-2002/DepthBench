@@ -69,7 +69,7 @@ The following model configs are currently available under: [`./configs`](./confi
 | Size | Hidden | Intermediate | Heads | Layers | Data Volume | Batch Size | Sequence Length | Steps |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | 400M | 1024 | 2736 | 16 | 24 | 8B | 512 | 2048 | 7.6k |
-| 1B | 2048 | 5461 | 32 | 24 | 21B | 512 | 2048 | 20k |
+| 1B | 2048 | 5504 | 16 | 28 | ? | ? | 2048 | ? |
 
 ### 400M Aspect-Ratio Variants （Fix Total Size）
 
@@ -82,10 +82,6 @@ The following model configs are currently available under: [`./configs`](./confi
 | 28 | 960 | 2560 | 16 | 60 | 34.29 | 310M |  406M | +0.21% |
 | 30 | 928 | 2480 | 16 | 58 | 30.93 | 311M |  404M | -0.38% |
 | 32 | 896 | 2400 | 16 | 56 | 28.00 | 309M |  399M | -1.49% |
-
-deeper variants
-| Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size |  Total Size | Total Diff |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | 36 | 864 | 2304 | 16 | 54 | 24.00 | 323M |  409M | +0.99% |
 | 42 | 800 | 2144 | 16 | 50 | 19.05 | 324M |  404M | -0.31% |
 | 50 | 736 | 1968 | 16 | 46 | 14.72 | 326M |  400M | -1.41% |
