@@ -121,7 +121,7 @@ Keep backbone size 302M +- 3%
 
 ## 1B scale
 
-Ref Qwen3-1.7B shape:
+Ref Qwen3-1.7B same shape:
 | Size | Hidden | Intermediate | Q_Heads | KV_heads | Layers | Data Volume | Batch Size | Sequence Length | Steps |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | 1.6B | 2048 | 6144 | 16 | 8 | 28 | 32B | 512 | 2048 | 30.4k |
