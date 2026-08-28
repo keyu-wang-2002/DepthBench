@@ -69,7 +69,6 @@ The following model configs are currently available under: [`./configs`](./confi
 | Size | Hidden | Intermediate | Heads | Layers | Data Volume | Batch Size | Sequence Length | Steps |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | 400M | 1024 | 2736 | 16 | 24 | 8B | 512 | 2048 | 7.6k |
-| 1.6B | 2048 | 6144 | 16 | 28 | 32B | 512 | 2048 | 32.4k |
 
 ### 400M Aspect-Ratio Variants （Fix Total Size）
 
@@ -119,6 +118,12 @@ hidden = heads * head_dim
 intermediate = ceil(hidden * 8/3, multiple=16)
 Keep backbone size 302M +- 3%
 ```
+
+## 1B
+
+| Size | Hidden | Intermediate | Q_Heads | KV_heads | Layers | Data Volume | Batch Size | Sequence Length | Steps |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1.6B | 2048 | 6144 | 16 | 8 | 28 | 32B | 512 | 2048 | 32.4k |
 
 ## Training Script
 
