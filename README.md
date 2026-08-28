@@ -119,7 +119,7 @@ intermediate = ceil(hidden * 8/3, multiple=16)
 Keep backbone size 302M +- 3%
 ```
 
-## 1B
+## 1B scale
 
 Ref Qwen3-1.7B shape:
 | Size | Hidden | Intermediate | Q_Heads | KV_heads | Layers | Data Volume | Batch Size | Sequence Length | Steps |
@@ -136,7 +136,7 @@ Ref Qwen3-1.7B shape:
 |     54 |   1504 |         4512 |      16 |        8 |       94 |    **27.85** |        1.466B | **1.617B** |     +0.11% |
 
 
-Sweep LR on the Pre-LN base shape in {2e-3, 1e-3, 5e-4}. Apply the optimal LR to other shapes, and HC, AttnRes
+Sweep LR on the Pre-LN base shape (L28, d2048) in {2e-3, 1e-3, 5e-4}. Apply the optimal LR to other shapes, and HC, AttnRes
 
 
 
