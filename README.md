@@ -121,6 +121,7 @@ Keep backbone size 302M +- 3%
 
 ## 1B
 
+Ref Qwen3-1.7B shape:
 | Size | Hidden | Intermediate | Q_Heads | KV_heads | Layers | Data Volume | Batch Size | Sequence Length | Steps |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | 1.6B | 2048 | 6144 | 16 | 8 | 28 | 32B | 512 | 2048 | 32.4k |
@@ -133,6 +134,10 @@ Keep backbone size 302M +- 3%
 |     40 |   1728 |         5184 |      16 |        8 |      108 |    **43.20** |        1.433B | **1.607B** |     −0.51% |
 |     48 |   1600 |         4800 |      16 |        8 |      100 |    **33.33** |        1.475B | **1.636B** |     +1.25% |
 |     54 |   1504 |         4512 |      16 |        8 |       94 |    **27.85** |        1.466B | **1.617B** |     +0.11% |
+
+
+Sweep LR on the Pre-LN base shape in {2e-3, 1e-3, 5e-4}. Apply the optimal LR to other shapes, and HC, AttnRes
+
 
 
 ## Training Script
