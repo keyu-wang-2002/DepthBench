@@ -136,7 +136,7 @@ Ref Qwen3-1.7B same shape:
 |     54 |   1504 |         4512 |      16 |        8 |       94 |    **27.85** |        1.466B | **1.617B** |     +0.11% |
 
 
-Sweep LR on the Pre-LN base shape (L28, d2048) in {2e-3, 1e-3, 5e-4}. Apply the optimal LR to other shapes, and HC, AttnRes
+Sweep LR on the Pre-LN base shape (L28, d2048) in {2e-3, 1e-3, 5e-4}. Apply this uniform optimal LR to all shapes for Pre-LN, HC, AttnRes
 
 
 
