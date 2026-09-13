@@ -145,7 +145,7 @@ Sweep LR in {2e-3, 1e-3, 5e-4, 2e-4} on the Pre-LN base shape (L28, d2048) (hard
 
 LR = 2e-3, {Pre-LN, HC, Full AttnRes}
 
-### 200M -- 4B -- 38k steps
+### 200M -- 4B -- 3.8k steps
 
 | Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Total Size | Total Diff |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -153,7 +153,7 @@ LR = 2e-3, {Pre-LN, HC, Full AttnRes}
 | 18 | 768 | 2048 | 16 | 48 | 42.67 | 127M | 205M | 0.00% |
 | 12 | 896 | 2400 | 16 | 56 | 74.67 | 116M | 206M | +0.69% |
 
-### 300M -- 6B -- 57k steps
+### 300M -- 6B -- 5.7k steps
 
 | Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Total Size | Total Diff |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -169,7 +169,7 @@ LR = 2e-3, {Pre-LN, HC, Full AttnRes}
 | 24 | 1024 | 2736 | 16 | 64 | 42.67 | 302M | 405M | 0.00% |
 | 16 | 1216 | 3248 | 16 | 76 | 76.00 | 284M | 406M | +0.28% |
 
-### 500M -- 10B -- 95k steps
+### 500M -- 10B -- 9.5k steps
 
 | Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Total Size | Total Diff |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
