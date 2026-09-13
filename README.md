@@ -141,6 +141,43 @@ Ref Qwen3-1.7B same shape:
 Sweep LR in {2e-3, 1e-3, 5e-4, 2e-4} on the Pre-LN base shape (L28, d2048) (hard stop at half data?). Apply this uniform optimal LR to all shapes for Pre-LN, HC, AttnRes
 
 
+## Depth Scaling Ladder
+
+LR = 2e-3, {Pre-LN, HC, Full AttnRes}
+
+### 200M -- 4B -- 38k steps
+
+| Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Total Size | Total Diff |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 24 | 672 | 1792 | 16 | 42 | 28.00 | 130M | 198M | -3.42% |
+| 18 | 768 | 2048 | 16 | 48 | 42.67 | 127M | 205M | 0.00% |
+| 12 | 896 | 2400 | 16 | 56 | 74.67 | 116M | 206M | +0.69% |
+
+### 300M -- 6B -- 57k steps
+
+| Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Total Size | Total Diff |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 28 | 800 | 2144 | 16 | 50 | 28.57 | 216M | 296M | +1.09% |
+| 21 | 896 | 2400 | 16 | 56 | 42.67 | 203M | 293M | 0.00% |
+| 14 | 1056 | 2816 | 16 | 66 | 75.43 | 187M | 294M | +0.18% |
+
+### 400M (already done)
+
+| Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Total Size | Total Diff |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 32 | 896 | 2400 | 16 | 56 | 28.00 | 309M | 399M | -1.49% |
+| 24 | 1024 | 2736 | 16 | 64 | 42.67 | 302M | 405M | 0.00% |
+| 16 | 1216 | 3248 | 16 | 76 | 76.00 | 284M | 406M | +0.28% |
+
+### 500M -- 10B -- 95k steps
+
+| Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Total Size | Total Diff |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 34 | 992 | 2656 | 16 | 62 | 29.18 | 403M | 502M | -0.42% |
+| 26 | 1120 | 2992 | 16 | 70 | 43.08 | 392M | 504M | 0.00% |
+| 17 | 1344 | 3584 | 16 | 84 | 79.06 | 368M | 504M | -0.16% |
+
+
 
 ## Training Script
 
