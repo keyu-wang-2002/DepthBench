@@ -151,6 +151,7 @@ class LigerHyperConnection(nn.Module):
         num_residual_streams: int,
         dim: int,
         branch: Optional[nn.Module] = None,
+        layer_index: Optional[int] = None,
         gating_factor_init: float = 0.01,
         sinkhorn_iters: int = 20,
         init_device: str = "cpu",
@@ -174,8 +175,11 @@ class LigerHyperConnection(nn.Module):
         self.branch = branch
         self.num_residual_streams = num_residual_streams
         self.dim = dim
+        self.selected_stream = (layer_index or 0) % num_residual_streams
         self.tmax = int(sinkhorn_iters)
         self.gating_factor_init = float(gating_factor_init)
+        self.pre_bias_mag = 8.0
+        self.residual_offdiag_bias = -8.0
         self.allow_fp32 = bool(allow_fp32)
         self.rms_eps = float(rms_eps)
         self.pre_eps = float(pre_eps)
@@ -194,8 +198,16 @@ class LigerHyperConnection(nn.Module):
 
     @torch.no_grad()
     def reset_parameters(self):
-        self.phi.normal_(mean=0.0, std=0.02)
+        # Start with a nearly one-hot read, unit writes, and near-identity transport.
+        self.phi.zero_()
         self.b.zero_()
+        self.b[: self.num_residual_streams].fill_(-self.pre_bias_mag)
+        self.b[self.selected_stream] = self.pre_bias_mag
+        residual_bias = self.b[2 * self.num_residual_streams :].view(
+            self.num_residual_streams, self.num_residual_streams
+        )
+        residual_bias.fill_(self.residual_offdiag_bias)
+        residual_bias.fill_diagonal_(0.0)
         self.alpha_pre.fill_(self.gating_factor_init)
         self.alpha_post.fill_(self.gating_factor_init)
         self.alpha_res.fill_(self.gating_factor_init)
@@ -332,7 +344,7 @@ class HyperConnection(nn.Module):
                 device=init_device,
                 dtype=dtype,
             )
-            residual_bias.fill_diagonal_(self.bias_mag)
+            residual_bias.fill_diagonal_(0.0)
             self.residual_bias = nn.Parameter(residual_bias)
 
             self.pre_dynamic_proj = nn.Parameter(
@@ -409,7 +421,7 @@ class HyperConnection(nn.Module):
         self.pre_bias[self.selected_stream] = self.bias_mag
         self.post_bias.zero_()
         self.residual_bias.fill_(-self.bias_mag)
-        self.residual_bias.fill_diagonal_(self.bias_mag)
+        self.residual_bias.fill_diagonal_(0.0)
         self.pre_dynamic_proj.zero_()
         self.post_dynamic_proj.zero_()
         self.residual_dynamic_proj.zero_()

@@ -18,11 +18,11 @@ case "${SHAPE}" in
     L16|L20|L24)
         DEFAULT_DEVICE_MICROBATCH_SIZE=8
         ;;
-    L26|L28|L30|L32)
+    L26|L28|L30|L32|L36|L42|L50|L56|L62|L70)
         DEFAULT_DEVICE_MICROBATCH_SIZE=4
         ;;
     *)
-        echo "Unsupported SHAPE=${SHAPE}; expected L16, L20, L24, L26, L28, L30, or L32" >&2
+        echo "Unsupported SHAPE=${SHAPE}; expected a 400M shape in configs/ (L16 through L70)" >&2
         exit 2
         ;;
 esac
@@ -31,10 +31,15 @@ case "${METHOD}" in
     hc)
         ENTRYPOINT=examples/pretrain_hc.py
         EXTRA_ARGS=()
+        DEFAULT_RUN_NAME="pretrain-${METHOD}-400M-${SHAPE}-lr${LR_TAG}"
         ;;
     mhc)
         ENTRYPOINT=examples/pretrain_mhc.py
         EXTRA_ARGS=("--mhc-backend=${MHC_BACKEND:-liger_mhc}")
+        DEFAULT_RUN_NAME="pretrain-${METHOD}-${MHC_BACKEND:-liger_mhc}-400M-${SHAPE}-lr${LR_TAG}"
+        if [[ "${MHC_BACKEND:-liger_mhc}" != "mhc_static" ]]; then
+            DEFAULT_RUN_NAME="${DEFAULT_RUN_NAME}-gap8"
+        fi
         ;;
     *)
         echo "Unsupported METHOD=${METHOD}; expected hc or mhc" >&2
@@ -50,7 +55,7 @@ fi
 GRADIENT_ACCUMULATION_STEPS=$((GLOBAL_BATCH_SIZE / (NPROC_PER_NODE * DEVICE_MICROBATCH_SIZE)))
 
 MODEL_CONFIG="configs/llama_400m_${SHAPE}.json"
-RUN_NAME="${RUN_NAME:-pretrain-${METHOD}-400M-${SHAPE}-lr${LR_TAG}}"
+RUN_NAME="${RUN_NAME:-${DEFAULT_RUN_NAME}}"
 
 echo "method=${METHOD} shape=${SHAPE} learning_rate=${LEARNING_RATE}"
 echo "world_size=${NPROC_PER_NODE} global_batch_size=${GLOBAL_BATCH_SIZE}"
