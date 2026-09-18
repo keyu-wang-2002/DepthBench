@@ -266,6 +266,7 @@ class HyperConnectionsConfig(Config):
                 num_residual_streams=self.num_residual_streams,
                 dim=dim,
                 branch=branch,
+                layer_index=layer_index,
                 gating_factor_init=self.gating_factor_init,
                 sinkhorn_iters=self.sinkhorn_iters,
                 init_device=init_device,

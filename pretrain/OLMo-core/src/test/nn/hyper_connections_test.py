@@ -1,13 +1,84 @@
+import math
+
 import pytest
 import torch
 import torch.nn as nn
 
+import olmo_core.nn.hyper_connections as hyper_connections
 from olmo_core.nn.hyper_connections import (
     HyperConnection,
     HyperConnectionStreamExpand,
     HyperConnectionStreamReduce,
+    LigerHyperConnection,
     sinkhorn_log,
 )
+
+
+@pytest.fixture
+def liger_init_only(monkeypatch):
+    # Initializers and state-dict loading must be testable without CUDA or Liger.
+    monkeypatch.setattr(hyper_connections, "_require_liger_mhc", lambda: (None, None, None))
+    monkeypatch.setattr(hyper_connections, "_check_liger_mhc_runtime", lambda _: None)
+
+
+@pytest.mark.parametrize("kind", ["mhc", "liger_mhc"])
+@pytest.mark.parametrize("num_streams", [1, 2, 4, 8])
+@pytest.mark.parametrize("layer_index", [0, 1, 5])
+def test_mhc_gap8_initialization(kind, num_streams, layer_index, liger_init_only):
+    kwargs = dict(num_residual_streams=num_streams, dim=8, layer_index=layer_index)
+    connector = (
+        LigerHyperConnection(**kwargs)
+        if kind == "liger_mhc"
+        else HyperConnection(kind=kind, tanh=False, **kwargs)
+    )
+    # Verify both construction and reinitialization after arbitrary prior weights.
+    for reset in (False, True):
+        if reset:
+            with torch.no_grad():
+                for parameter in connector.parameters():
+                    parameter.fill_(0.25)
+            connector.reset_parameters()
+        if kind == "liger_mhc":
+            assert connector.phi.dtype == torch.bfloat16
+            assert connector.b.dtype == torch.float32
+            assert torch.count_nonzero(connector.phi) == 0
+            pre = connector.b[:num_streams]
+            post = connector.b[num_streams : 2 * num_streams]
+            residual = connector.b[2 * num_streams :].view(num_streams, num_streams)
+            gates = (connector.alpha_pre, connector.alpha_post, connector.alpha_res)
+        else:
+            for projection in (
+                connector.pre_dynamic_proj,
+                connector.post_dynamic_proj,
+                connector.residual_dynamic_proj,
+            ):
+                assert torch.count_nonzero(projection) == 0
+            pre, post, residual = connector.pre_bias, connector.post_bias, connector.residual_bias
+            gates = (connector.pre_gate, connector.post_gate, connector.residual_gate)
+
+        expected_pre = torch.full((num_streams,), -8.0)
+        expected_pre[layer_index % num_streams] = 8.0
+        identity = torch.eye(num_streams)
+        torch.testing.assert_close(pre, expected_pre, rtol=0, atol=0)
+        torch.testing.assert_close(post, torch.zeros_like(post), rtol=0, atol=0)
+        torch.testing.assert_close(residual, -8.0 * (1 - identity), rtol=0, atol=0)
+        for gate in gates:
+            torch.testing.assert_close(gate, gate.new_tensor(0.01), rtol=0, atol=0)
+        expected_residual = (identity + math.exp(-8) * (1 - identity)) / (
+            1 + (num_streams - 1) * math.exp(-8)
+        )
+        torch.testing.assert_close(sinkhorn_log(residual), expected_residual)
+
+
+def test_liger_mhc_checkpoint_parameters_override_initialization(liger_init_only):
+    connector = LigerHyperConnection(num_residual_streams=4, dim=8, layer_index=1)
+    # Loading a complete old/trained checkpoint must not reapply the initializer.
+    state = {name: torch.full_like(value, 0.25) for name, value in connector.state_dict().items()}
+    assert set(state) == {"phi", "b", "alpha_pre", "alpha_post", "alpha_res"}
+    restored = LigerHyperConnection(num_residual_streams=4, dim=8, layer_index=3)
+    restored.load_state_dict(state, strict=True)
+    for name, value in restored.state_dict().items():
+        torch.testing.assert_close(value, state[name], rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("kind", ["hc", "mhc", "mhc_static"])
@@ -93,9 +164,7 @@ def test_mhc_matches_paper_parameterization_and_propagation_equations():
     )
     with torch.no_grad():
         connector.branch.weight.copy_(1.5 * torch.eye(3))
-        connector.pre_dynamic_proj.copy_(
-            torch.arange(12, dtype=torch.float32).reshape(6, 2) / 20.0
-        )
+        connector.pre_dynamic_proj.copy_(torch.arange(12, dtype=torch.float32).reshape(6, 2) / 20.0)
         connector.post_dynamic_proj.copy_(
             torch.arange(12, dtype=torch.float32).reshape(6, 2).flip(0) / 25.0
         )
