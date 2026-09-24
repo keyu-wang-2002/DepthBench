@@ -1,0 +1,174 @@
+diff --git a/libs/moda_triton/fla/ops/moda/moda_v17.py b/libs/moda_triton/fla/ops/moda/moda_v17.py
+index eae993b..7379983 100644
+--- a/libs/moda_triton/fla/ops/moda/moda_v17.py
++++ b/libs/moda_triton/fla/ops/moda/moda_v17.py
+@@ -496,45 +496,47 @@ def parallel_moda_fwd(
+     else:
+         BS = min(32, max(16, triton.next_power_of_2(T_kv)))
+         BK = min(256, max(16, triton.next_power_of_2(K)))
+-        BV = min(64, max(16, triton.next_power_of_2(V)))
++        BV = min(128, max(16, triton.next_power_of_2(V)))
+         num_warps = 2
+ 
+-    if customized_BT is not None:
+-        BT = customized_BT
+-    if customized_BS is not None:
+-        BS = customized_BS
+-    if customized_BK is not None:
+-        BK = customized_BK
+-    if customized_BV is not None:
+-        BV = customized_BV
+-    if customized_num_warps is not None:
+-        num_warps = customized_num_warps
+-
+     device_id = q.device.index
+ 
+-    if is_target_gpu(device_id, "H800"):
++    if is_target_gpu(device_id, "H800") or is_target_gpu(device_id, "H100"):
+         BT = 64
+-        BS = 64
+-        BK = 64
+-        BV = 64
++        BS = 64 if max(K, V) <= 64 else 32
++        BK = min(256, max(64, triton.next_power_of_2(K)))
++        BV = min(256, max(64, triton.next_power_of_2(V)))
+         num_warps = 4
+ 
+     elif is_target_gpu(device_id, "H20"):
+         BT = 64
+-        BS = 64
+-        BK = 64
+-        BV = 64
++        BS = 64 if max(K, V) <= 64 else 32
++        BK = min(256, max(64, triton.next_power_of_2(K)))
++        BV = min(256, max(64, triton.next_power_of_2(V)))
+         num_warps = 4
+ 
+     elif is_target_gpu(device_id, "A100"):
+         BT = 64
+-        BS = 64
+-        BK = 64
+-        BV = 64
++        BS = 64 if max(K, V) <= 64 else 32
++        BK = min(256, max(64, triton.next_power_of_2(K)))
++        BV = min(128, max(64, triton.next_power_of_2(V)))
+         num_warps = 4
+ 
+-    else:
+-        print("Target GPU is not optimized")
++    # Other GPUs retain the architecture-aware defaults selected from their
++    # available shared memory above. Do not print here: this dispatch runs for
++    # every layer and microbatch and previously flooded H100/B200 training logs.
++
++    # Explicit tuning arguments take precedence over per-device defaults.
++    if customized_BT is not None:
++        BT = customized_BT
++    if customized_BS is not None:
++        BS = customized_BS
++    if customized_BK is not None:
++        BK = customized_BK
++    if customized_BV is not None:
++        BV = customized_BV
++    if customized_num_warps is not None:
++        num_warps = customized_num_warps
+ 
+     assert (
+         BT % moda_group_num == 0
+@@ -547,7 +549,7 @@ def parallel_moda_fwd(
+         prepare_chunk_indices(cu_seqlens, BT) if cu_seqlens is not None else None
+     )
+     NT = triton.cdiv(TQ, BT) if cu_seqlens is None else len(chunk_indices)
+-    assert NK == 1, "The key dimension can not be larger than 256"
++    assert NK == 1, f"BK={BK} must cover key head dimension K={K}"
+ 
+     o = torch.empty(B, TQ, HQ, V, dtype=v.dtype, device=q.device)
+     lse = torch.empty(B, TQ, HQ, dtype=torch.float, device=q.device)
+@@ -1611,27 +1613,16 @@ def parallel_moda_bwd(
+         BT = 64
+         BS = 32
+         BK = max(triton.next_power_of_2(K), 16)
+-        BV = min(max(triton.next_power_of_2(V), 16), 64)
++        BV = min(max(triton.next_power_of_2(V), 16), 128)
+         num_warps = 2
+ 
+-    if customized_BT is not None:
+-        BT = customized_BT
+-    if customized_BS is not None:
+-        BS = customized_BS
+-    if customized_BK is not None:
+-        BK = customized_BK
+-    if customized_BV is not None:
+-        BV = customized_BV
+-    if customized_num_warps is not None:
+-        num_warps = customized_num_warps
+-
+     device_id = q.device.index
+ 
+-    if is_target_gpu(device_id, "H800"):
+-        BT = 128
++    if is_target_gpu(device_id, "H800") or is_target_gpu(device_id, "H100"):
++        BT = 128 if max(K, V) <= 64 else 64
+         BS = 32
+-        BK = 64
+-        BV = 64
++        BK = min(256, max(64, triton.next_power_of_2(K)))
++        BV = min(256, max(64, triton.next_power_of_2(V)))
+         num_warps = 8
+         default_group_bs, default_group_warps, default_depth_bs, default_depth_warps = (
+             32,
+@@ -1643,8 +1634,8 @@ def parallel_moda_bwd(
+     elif is_target_gpu(device_id, "H20"):
+         BT = 32
+         BS = 32
+-        BK = 64
+-        BV = 64
++        BK = min(256, max(64, triton.next_power_of_2(K)))
++        BV = min(256, max(64, triton.next_power_of_2(V)))
+         num_warps = 4
+         default_group_bs, default_group_warps, default_depth_bs, default_depth_warps = (
+             64,
+@@ -1656,8 +1647,8 @@ def parallel_moda_bwd(
+     elif is_target_gpu(device_id, "A100"):
+         BT = 32
+         BS = 32
+-        BK = 64
+-        BV = 64
++        BK = min(256, max(64, triton.next_power_of_2(K)))
++        BV = min(128, max(64, triton.next_power_of_2(V)))
+         num_warps = 4
+         default_group_bs, default_group_warps, default_depth_bs, default_depth_warps = (
+             128,
+@@ -1667,7 +1658,7 @@ def parallel_moda_bwd(
+         )
+ 
+     else:
+-        print("Target GPU is not optimized")
++        # Generic Ampere/Hopper/Blackwell defaults were selected above.
+         default_group_bs, default_group_warps, default_depth_bs, default_depth_warps = (
+             64,
+             2,
+@@ -1675,6 +1666,24 @@ def parallel_moda_bwd(
+             4,
+         )
+ 
++    # Explicit tuning arguments take precedence over per-device defaults.
++    if customized_BT is not None:
++        BT = customized_BT
++    if customized_BS is not None:
++        BS = customized_BS
++    if customized_BK is not None:
++        BK = customized_BK
++    if customized_BV is not None:
++        BV = customized_BV
++    if customized_num_warps is not None:
++        num_warps = customized_num_warps
++
++    if BK < K or BV < V:
++        raise ValueError(
++            f"MoDA backward tiles must cover the head dimensions, got "
++            f"K={K}, V={V}, BK={BK}, BV={BV}"
++        )
++
+     if group_bs is None:
+         group_bs = default_group_bs
+     if group_warps is None:

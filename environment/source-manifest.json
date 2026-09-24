@@ -1,0 +1,46 @@
+{
+  "captured_at": "2026-09-24T12:59:01.628131+00:00",
+  "python": "3.10.12",
+  "platform": "linux-x86_64",
+  "package_count": 161,
+  "excluded_source_installs": [
+    {
+      "name": "ai2-olmo-core",
+      "version": "2.5.0",
+      "reason": "Local/source install; preserve the source checkout separately"
+    },
+    {
+      "name": "ai2-olmo-core",
+      "version": "2.5.0",
+      "reason": "Local/source install; preserve the source checkout separately"
+    }
+  ],
+  "sources": {
+    "DepthBench_main_latest": {
+      "commit": "5e385fcb04b1a5e190c66e61a1c48852c3df893e",
+      "branch": "HEAD",
+      "tracked_changes": "README.md                                          | 24 ++++++++++++++++++++++\n .../src/olmo_core/nn/transformer/block.py          |  6 ++++--\n 2 files changed, 28 insertions(+), 2 deletions(-)",
+      "file_sha256": {
+        "pretrain/OLMo-core/src/olmo_core/nn/transformer/block.py": "48c19493825cb2a49ff5b7374d943ef26380e5b7fd689c18b428dcf0a6ba3248",
+        "pretrain/OLMo-core/src/olmo_core/nn/hyper_connections.py": "81f893bca0d7b86f4fb3664ac41c0591a9faa7352eaad07234efd53b57c3d24a"
+      }
+    },
+    "DepthBench_hc_mhc_cleanup_pr": {
+      "commit": "ac622718382c33ea5895bc3fc852ade9607fdbb4",
+      "branch": "yangyi_hc_mhc_cleanup_pr",
+      "tracked_changes": "docs/hyper_connections.md                          |  8 ++++++\n examples/pretrain_hyper_connections_shape.sh       |  4 +--\n .../src/olmo_core/nn/hyper_connections.py          | 15 +++++++++-\n .../src/olmo_core/nn/transformer/config.py         |  1 +\n .../src/test/nn/hyper_connections_test.py          | 32 ++++++++++++++++++++++\n 5 files changed, 57 insertions(+), 3 deletions(-)",
+      "file_sha256": {
+        "pretrain/OLMo-core/src/olmo_core/nn/hyper_connections.py": "5a1c71ab459c09324bd2c2e7c8e7fea46d54ded455909559f2f0081c11311257"
+      }
+    },
+    "MoDA": {
+      "commit": "ba872a347c2b085ac618c8692de9abd0247a8f4a",
+      "branch": "main",
+      "tracked_changes": "libs/moda_triton/fla/ops/moda/moda_v17.py | 101 ++++++++++++++++--------------\n 1 file changed, 55 insertions(+), 46 deletions(-)",
+      "file_sha256": {
+        "libs/moda_triton/fla/ops/moda/moda_v17.py": "a8b3cee73d5907bd51faa5aa9328885905c283f36b1945280e81deda16f89535"
+      }
+    }
+  },
+  "moda_patch_sha256": "bc945a05e8bb5b6e4f5e9e963eb45b8ace1564417baf05fbfc2debddf3f141a1"
+}

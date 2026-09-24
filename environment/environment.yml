@@ -1,0 +1,8 @@
+name: depthbench-residuals-cu128
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10.12
+  - pip
+  - pip:
+      - -r requirements-cu128.lock.txt
