@@ -25,5 +25,5 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 "${VENV}/bin/python" -m pip install --no-deps --no-compile \
     --target "${VENV}/profiles/attnres-fla-0.4.1" -r "${HERE}/requirements-attnres.txt"
 "${VENV}/bin/python" -m pip check
-echo "Installed. Select base, moda, or attnres with source ${HERE}/activate.sh."
+echo "Installed. Activate ${VENV}/bin/activate and select dependencies as described in ${HERE}/README.md."
 echo "MoDA additionally requires the pinned source checkout and included kernel patch."

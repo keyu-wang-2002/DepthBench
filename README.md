@@ -6,8 +6,8 @@
 
 For the pinned CUDA 12.8 environment used by HC, Liger mHC, MoDA and AttnRes
 experiments, see [Residual Training Environment](environment/README.md).
-It includes Conda/venv installation, isolated MoDA and AttnRes dependency
-profiles, and import checks. The CUDA 11.8 recipe below is the legacy setup.
+It includes Conda/venv installation and isolated MoDA and AttnRes dependencies.
+The CUDA 11.8 recipe below is the legacy setup.
 
 ```bash
 python -m venv depthbench

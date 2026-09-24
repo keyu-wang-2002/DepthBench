@@ -1,9 +1,7 @@
-# DepthBench Residual Training Environment
+# Residual Training Environment
 
-This bundle captures the working Linux x86_64 / Python 3.10.12 **cu128**
-environment on 2026-09-24. It does not change any existing environment or jobs.
-
-## Core Versions
+Linux x86_64 environment captured from the HC, mHC, MoDA and AttnRes experiments
+on 2026-09-24:
 
 | Component | Version |
 |---|---|
@@ -14,60 +12,25 @@ environment on 2026-09-24. It does not change any existing environment or jobs.
 | Transformers / Tokenizers | 5.7.0 / 0.22.2 |
 | NumPy | 2.2.6 |
 | W&B | 0.26.1 |
-| Local OLMo-core | 2.5.0 plus DepthBench changes; use the correct source checkout |
 
-`requirements-cu128.lock.txt` pins the installed registry packages, including
-CUDA libraries, data/evaluation tools, and transitive dependencies. It excludes
-editable/source packages deliberately. **Installing PyPI OLMo-core is not a
-replacement for DepthBench's modified source.** This is a captured version lock,
-not a wheel archive or a pip `--require-hashes` lock.
+The requirements lock includes the captured registry dependencies. Install
+DepthBench's modified OLMo-core from this repository, not PyPI. A compatible
+NVIDIA driver, gcc/g++ and linker are system prerequisites. Standalone Flash
+Attention and other optional backends are not included.
 
-## Method Profiles
+## Install
 
-| Profile | Methods | Additional source/dependencies |
-|---|---|---|
-| `base` | Pre-LN/Post-LN, normalization variants, HC, Liger mHC | DepthBench source, Liger 0.8.0 |
-| `moda` | PreNorm/PostNorm MoDA | Patched `MoDA/libs/moda_triton` as the `fla` provider |
-| `attnres` | Full and Block AttnRes | Separate `flash-linear-attention==0.4.1` + `fla-core==0.4.1` overlay |
-
-MoDA's fork and official FLA both provide a package named **`fla`**. The official
-0.4.1 overlay does not contain `fla.ops.moda`, while MoDA's older fork lacks APIs
-used by the current AttnRes kernel. Do not pip-install them over one another or
-try to combine their files. Select one provider per process with the launcher.
-This is dependency isolation, not a mixed MoDA/HC architecture.
-
-The old `.venv` is **torch2.6.0+cu118 / Triton3.2.0**, not interchangeable with
-`.venv_b200`. In particular, Liger mHC with 20 Sinkhorn iterations previously
-hung with the old stack on H100. Use this cu128 stack for reproducing current
-HC/mHC runs; do not silently switch an old experiment's runtime on resume.
-
-No standalone `flash-attn`, FA3/FA4, torchao, or causal-conv1d package is included:
-they are not installed in the captured base environment. Our standard attention
-training uses the PyTorch SDPA path; MoDA/AttnRes/mHC add their own kernels.
-An explicit `flash_2`/`flash_3`/`flash_4` backend needs separate installation and
-validation. `lm-eval` is captured for the existing custom adapter, not every
-optional HF/vLLM evaluation backend.
-
-## Recreate Without Conda
-
-Run installation on an allocated CPU node, not a busy login node. This installs
-into a **new** venv and refuses to modify an existing one:
+Use an allocated CPU node for installation. The installer creates a new venv,
+installs local OLMo-core and an isolated AttnRes FLA overlay, and runs `pip check`.
+It refuses to modify an existing environment.
 
 ```bash
 PYTHON_BIN=python3.10 bash environment/install.sh \
   /path/new-depthbench-venv /path/DepthBench
+source /path/new-depthbench-venv/bin/activate
 ```
 
-The installer also creates the AttnRes overlay inside the new environment.
-MoDA source is handled below. The Python executable, a suitable NVIDIA driver,
-gcc/g++, and a working system linker are system prerequisites, not pip packages.
-The driver must support this CUDA12.8/PyTorch build and the target GPU.
-Do not copy old shebangs, absolute editable-install paths, or linker symlinks
-pointing into another user's home directory.
-
-## Conda Alternative
-
-Run from the directory containing the requirements file:
+Alternatively, use Conda from the directory containing the requirements files:
 
 ```bash
 cd environment
@@ -79,86 +42,66 @@ python -m pip install --no-deps --no-compile \
 python -m pip check
 ```
 
-Use an empty overlay directory. Do not install OLMo-core's `[all]` extra: it
-selects additional backends and can replace the validated Torch/FLA stack.
+Use an empty overlay directory. Do not install OLMo-core's `[all]` extra, which
+can replace this Torch/FLA stack. The legacy Torch 2.6 / CUDA 11.8 environment is
+not interchangeable with this one; Liger mHC previously hung on H100 with that
+older stack and 20 Sinkhorn iterations.
 
-## Preserve The MoDA Kernel Patch
+## MoDA Kernel
 
-The current MoDA kernel has local H100 dispatch and head-dimension tile fixes.
-A clean upstream clone is **not** equivalent to the code used for our runs.
-For a new clone only:
+MoDA needs its fork of FLA plus the included H100 dispatch and head-dimension
+tiling fixes. For a new clone:
 
 ```bash
 git clone https://github.com/hustvl/MoDA.git /path/MoDA
 git -C /path/MoDA checkout ba872a347c2b085ac618c8692de9abd0247a8f4a
-git -C /path/MoDA apply --check /path/environment/moda-v17-local.patch
-git -C /path/MoDA apply /path/environment/moda-v17-local.patch
+git -C /path/MoDA apply --check /path/DepthBench/environment/moda-v17-local.patch
+git -C /path/MoDA apply /path/DepthBench/environment/moda-v17-local.patch
 ```
 
-Do not apply the patch twice to the existing workspace checkout. Its exact
-post-patch hash is recorded in `source-manifest.json` and checked by the import
-test. The manifest also records the DepthBench worktree commits and key source
-hashes. Keep the intended source snapshot: an environment file cannot reproduce
-uncommitted architecture changes or choose the right mHC initialization for you.
+Do not apply the patch twice to an existing patched checkout.
 
-## Select And Verify
+## Select Dependencies
 
-Run each profile in a fresh Python process. The activation script replaces
-`PYTHONPATH` so an old FLA overlay cannot silently shadow the selected provider.
+MoDA's fork and official FLA both provide `fla`, but are not interchangeable:
+MoDA needs `fla.ops.moda`; AttnRes needs the official FLA 0.4.1 APIs. Keep them
+separate and select exactly one provider per process. Do not globally install
+both or append an old FLA path to the paths below.
+
+After activating the venv or Conda environment, set the repository paths:
 
 ```bash
-# HC / mHC / standard and normalization baselines
-source environment/activate.sh base /path/DepthBench /path/new-depthbench-venv
-python environment/check_imports.py
-
-# MoDA, using the patched source (not a global editable FLA installation)
-source environment/activate.sh moda /path/DepthBench /path/new-depthbench-venv \
-  /path/MoDA/libs/moda_triton
-python environment/check_imports.py
-
-# Full / Block AttnRes, using the isolated overlay installed above
-source environment/activate.sh attnres /path/DepthBench /path/new-depthbench-venv
-python environment/check_imports.py
+REPO=/path/DepthBench
+ENV_ROOT="${VIRTUAL_ENV:-${CONDA_PREFIX:?Activate the environment first}}"
+BASE_PYTHONPATH="$REPO/pretrain/OLMo-core/src:$REPO:$REPO/examples"
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export TOKENIZERS_PARALLELISM=false
 ```
 
-Use the source checkout matching the experiment you want to reproduce. If an
-AttnRes overlay already exists elsewhere, pass it as the fourth activation
-argument. No training setting is changed by activation.
+Then choose **one** of the following before launching training.
 
-The helper limits CPU/compile workers and uses writable per-user caches. Set
-`DEPTHBENCH_TOOLCHAIN_BIN` to a directory containing a known-good `ld` if the
-site linker requires an override; no account-specific linker path is embedded.
-
-## Validation Scope
-
-The captured base passes `pip check`. Import/version/source-path checks can run
-without a GPU. Login-node CUDA/FLA warnings are not evidence that the training
-node has an incompatible GPU driver. On an allocated GPU, add `--cuda` for a
-CUDA BF16 matmul/backward check. This basic check is **not** a residual-kernel
-parity test or a full training reproduction.
-
-Prior experiment validation includes mHC CUDA smoke tests and production
-training, MoDA patched-kernel training/benchmarks, and AttnRes H100
-forward/backward parity plus compiled L34 training. Those experiment logs are
-not distributed with this bundle; see `VALIDATION.md` for the checks performed
-when capturing the environment.
-Do not infer that every method, GPU, head dimension, or TP/CP/MoE combination
-is supported just because the environment imports successfully. Re-run the
-method-specific GPU smoke test when changing runtime, GPU, source or shape.
-
-No credentials, data, checkpoints, or W&B/HF login state are included here.
-
-## Export A New Snapshot
-
-To record a later validated runtime, run the exporter with that runtime's
-Python. Supply the source paths explicitly and an empty output directory:
-
+HC, Liger mHC, or standard/normalization baselines:
 ```bash
-python environment/export_snapshot.py --depthbench-repo /path/DepthBench \
-  --moda-repo /path/MoDA --output-dir /path/new-environment-snapshot
+export PYTHONPATH="$BASE_PYTHONPATH"
 ```
 
-It exports package pins, source provenance and the MoDA kernel diff against
-that checkout's HEAD. The checked-in manifest records the historical source
-worktrees at capture time, not the current repository revision. Review source
-revisions, patches and installation instructions together when updating it.
+MoDA, using the patched source:
+```bash
+export PYTHONPATH="/path/MoDA/libs/moda_triton:$BASE_PYTHONPATH"
+```
+
+Full / Block AttnRes, using the isolated official FLA overlay:
+```bash
+export PYTHONPATH="$ENV_ROOT/profiles/attnres-fla-0.4.1:$BASE_PYTHONPATH"
+```
+
+Launch a fresh Python process after selecting dependencies. Training settings
+and the choice of model implementation remain controlled by the experiment.
+
+## Validation
+
+The captured environment passed `pip check`, all 161 installed package pins,
+and imports for all three dependency selections against main at `4ef3b20`.
+The MoDA patch reproduced the kernel used by the experiments. No fresh
+environment rebuild or new GPU training run was performed for this bundle;
+revalidate method-specific kernels when changing runtime, GPU or model shape.
