@@ -1,0 +1,3 @@
+# Install into a separate --target directory, NOT the shared site-packages.
+flash-linear-attention==0.4.1
+fla-core==0.4.1
