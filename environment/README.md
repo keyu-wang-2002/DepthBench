@@ -20,14 +20,31 @@ Attention and other optional backends are not included.
 
 ## Install
 
-Use an allocated CPU node for installation. The installer creates a new venv,
-installs local OLMo-core and an isolated AttnRes FLA overlay, and runs `pip check`.
-It refuses to modify an existing environment.
+From the repository root, install with one command:
 
 ```bash
-PYTHON_BIN=python3.10 bash environment/install.sh \
-  /path/new-depthbench-venv /path/DepthBench
-source /path/new-depthbench-venv/bin/activate
+bash environment/install.sh
+```
+
+This detects the repository automatically and creates `.venv-cu128` inside it.
+Python 3.10 must already be available; set `PYTHON_BIN=/path/to/python3.10` if
+needed. **MoDA is not installed by default**; follow the separate section below.
+
+Use an allocated CPU node for installation. The installer creates a new venv,
+installs local OLMo-core and an isolated AttnRes FLA overlay, and runs `pip check`.
+It prints progress and refuses to modify an existing environment. Activate it
+after installation:
+
+```bash
+source .venv-cu128/bin/activate
+```
+
+To choose a different destination (and optionally a different source checkout):
+
+```bash
+bash environment/install.sh /path/new-depthbench-venv
+# Existing two-path usage remains supported:
+bash environment/install.sh /path/new-depthbench-venv /path/DepthBench
 ```
 
 Alternatively, use Conda from the directory containing the requirements files:
