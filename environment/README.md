@@ -122,3 +122,26 @@ and imports for all three dependency selections against main at `4ef3b20`.
 The MoDA patch reproduced the kernel used by the experiments. No fresh
 environment rebuild or new GPU training run was performed for this bundle;
 revalidate method-specific kernels when changing runtime, GPU or model shape.
+
+## Legacy CUDA 11.8 Environment
+
+<details>
+<summary>Torch 2.6 / CUDA 11.8 recipe used by the early normalization baselines</summary>
+
+This stack is not interchangeable with the pinned cu128 environment above, and
+Liger mHC with 20 Sinkhorn iterations is known to hang on it. Prefer the cu128
+environment for new runs.
+
+```bash
+python -m venv depthbench
+source depthbench/bin/activate
+
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
+  --index-url https://download.pytorch.org/whl/cu118
+
+python -m pip install -e "pretrain/OLMo-core[wandb,transformers]"
+python -m pip install datasets pyarrow cached_path numpy tqdm matplotlib seaborn lm-eval
+```
+
+</details>

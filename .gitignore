@@ -11,10 +11,13 @@ logs/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-.venv-cu128/
 
 ckpt/
 workspace/
 wandb/
 data/
 eval_scripts/results/
+.venv*/
+*.egg-info/
+analysis/results/
+/results/

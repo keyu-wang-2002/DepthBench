@@ -1,44 +1,142 @@
-# DepthBench
+<div align="center">
 
+<h1><img src="assets/logo.svg" alt="DepthBench logo" height="32" align="center">&nbsp;DepthBench</h1>
 
+[![arXiv](https://img.shields.io/badge/arXiv-coming_soon-b31b1b.svg?style=flat-square)](#citation)
+[![hf_model](https://img.shields.io/badge/-Checkpoints-gray.svg?logo=huggingface&style=flat-square)](https://huggingface.co/aspect-ratio-scaling)
+[![Built on OLMo-core](https://img.shields.io/badge/built_on-OLMo--core-f0529c.svg?style=flat-square)](https://github.com/allenai/OLMo-core)
+[![Python 3.10](https://img.shields.io/badge/python-3.10-3776ab.svg?logo=python&logoColor=white&style=flat-square)](environment/README.md)
+[![PyTorch 2.8](https://img.shields.io/badge/PyTorch-2.8_cu128-ee4c2c.svg?logo=pytorch&logoColor=white&style=flat-square)](environment/README.md)
 
-## Environment Setup
+</div>
 
-For the pinned CUDA 12.8 environment used by HC, Liger mHC, MoDA and AttnRes
-experiments, see [Residual Training Environment](environment/README.md).
-It includes Conda/venv installation and isolated MoDA and AttnRes dependencies.
-The CUDA 11.8 recipe below is the legacy setup.
+<p>
+  🧱 DepthBench is a controlled testbed for studying <b>how Transformer language models use depth</b>.
+  It trains eleven residual-connection and normalization architectures (Pre-LN, Peri-LN, LNS,
+  DeepNorm, KEEL, depth-μP, CompleteP, HC, mHC, MoDA and AttnRes) under the same data, token budget and
+  model shapes, sweeps depth at fixed parameter count, and ships a set of architecture-aware probes
+  (angular distance, causal score, permutation score, logit lens, layer pruning, Jacobians) that run
+  directly on native OLMo-core checkpoints.
+</p>
+
+--------
+
+* [News](#news)
+* [Models](#models)
+* [Checkpoints](#checkpoints)
+* [Installation](#installation)
+* [Data Preparation](#data-preparation)
+* [Training](#training)
+  * [Model Configs](#model-configs)
+  * [Launching a Run](#launching-a-run)
+  * [Layer Statistics](#layer-statistics)
+* [Depth Analysis](#depth-analysis)
+  * [Calibration Data](#calibration-data)
+  * [Depth Metrics](#depth-metrics)
+  * [Other Analyses](#other-analyses)
+* [Evaluation](#evaluation)
+* [Repository Structure](#repository-structure)
+* [Citation](#citation)
+* [Acknowledgements](#acknowledgements)
+
+## News
+
+- [2026-09] 🚀 Initial public release of DepthBench: 11 depth architectures, 25 model shapes from 200M to 1.6B, and native-checkpoint depth analysis.
+- [2026-09] 🤗 130+ pre-trained checkpoints are available on the Hugging Face Hub at [aspect-ratio-scaling](https://huggingface.co/aspect-ratio-scaling).
+
+## Models
+
+Each architecture has its own training entrypoint in [`examples/`](examples). All of them share one
+Llama-style backbone, optimizer and data pipeline ([`examples/pretrain_llama_base.py`](examples/pretrain_llama_base.py)),
+so the residual/normalization scheme is the only thing that changes.
+Block implementations live in [`olmo_core/nn/transformer/block.py`](pretrain/OLMo-core/src/olmo_core/nn/transformer/block.py).
+
+| Year | Model | Paper | |
+| :---: | :---: | :--- | :--- |
+| 2020 | Pre-LN | [On Layer Normalization in the Transformer Architecture](https://arxiv.org/abs/2002.04745) | [code](examples/pretrain_preln.py) |
+| 2022 | DeepNorm | [DeepNet: Scaling Transformers to 1,000 Layers](https://arxiv.org/abs/2203.00555) | [code](examples/pretrain_deepnorm.py) |
+| 2023 | Depth-μP | [Tensor Programs VI: Feature Learning in Infinite-Depth Neural Networks](https://arxiv.org/abs/2310.02244) | [code](examples/pretrain_preln_mup.py) |
+| 2024 | HC | [Hyper-Connections](https://arxiv.org/abs/2409.19606) | [code](examples/pretrain_hc.py) · [docs](docs/hyper_connections.md) |
+| 2025 | Peri-LN (Sandwich-LN) | [Peri-LN: Revisiting Normalization Layer in the Transformer Architecture](https://arxiv.org/abs/2502.02732) | [code](examples/pretrain_periln.py) |
+| 2025 | LNS | [The Curse of Depth in Large Language Models](https://arxiv.org/abs/2502.05795) | [code](examples/pretrain_lns.py) |
+| 2025 | CompleteP | [Don't be lazy: CompleteP enables compute-efficient deep transformers](https://arxiv.org/abs/2505.01618) | [code](examples/pretrain_preln_mup.py) |
+| 2025 | mHC | [mHC: Manifold-Constrained Hyper-Connections](https://arxiv.org/abs/2512.24880) | [code](examples/pretrain_mhc.py) · [docs](docs/hyper_connections.md) |
+| 2026 | KEEL | [Post-LayerNorm Is Back: Stable, ExpressivE, and Deep](https://arxiv.org/abs/2601.19895) | [code](examples/pretrain_keel.py) |
+| 2026 | Full / Block AttnRes | [Attention Residuals](https://arxiv.org/abs/2603.15031) | [code](examples/pretrain_attnres.py) |
+| 2026 | MoDA (pre-/post-norm) | [Mixture-of-Depths Attention](https://arxiv.org/abs/2603.15619) | [code](examples/pretrain_moda.py) · [docs](docs/moda.md) |
+
+## Checkpoints
+
+We release 130+ pre-trained checkpoints on the Hugging Face Hub under
+[🤗 aspect-ratio-scaling](https://huggingface.co/aspect-ratio-scaling).
+They cover most architectures above at several depths, plus learning-rate sweeps (Pre-LN, LNS, AttnRes) at the 400M base shape.
+
+| Architecture | Tiers × depths |
+|---|---|
+| Pre-LN | 400M (L16–L32), 1.6B (L28, L40, L54) |
+| Peri-LN / LNS / DeepNorm / KEEL / MoDA (pre-norm) | 400M (L16–L32) |
+| HC / mHC | 200M, 300M, 500M ladders; 400M (L16–L70); 300M fixed backbone; HC also at 1.6B |
+| Full AttnRes | 400M (L16–L70), 1.6B (L28, L40) |
+| Block AttnRes | 400M (L16–L32), 500M (L34) |
+
+Depth-sweep repositories are named `<arch>-lr<lr>-llama-<size>-L<layers>-pretrain`, for example
+[`hc-lr2e-3-llama-400M-L24-pretrain`](https://huggingface.co/aspect-ratio-scaling/hc-lr2e-3-llama-400M-L24-pretrain).
+Each repository is a **raw OLMo-core distributed checkpoint**, not a `transformers` export. It holds the
+initial and final step directories (`step0/`, `step<N>/`, each with its `config.json`) and the tokenizer.
+Every analysis and evaluation script in this repository loads them directly:
 
 ```bash
-python -m venv depthbench
-source depthbench/bin/activate
+huggingface-cli download aspect-ratio-scaling/hc-lr2e-3-llama-400M-L24-pretrain \
+  --local-dir ckpt/hf/hc-400M-L24
 
-python -m pip install --upgrade pip setuptools wheel
-python -m pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu118
-
-cd pretrain/OLMo-core
-python -m pip install -e ".[wandb,transformers]"
-python -m pip install datasets pyarrow cached_path
-pip install torch transformers numpy tqdm matplotlib seaborn
-
-cd eval/lm-evaluation-harness
-python -m pip install -e .
+# a run directory resolves to its latest step
+python analysis/compute_angular_distance.py --model_path ckpt/hf/hc-400M-L24 \
+  --output_dir results/angular --token-data-glob "data/fineweb-edu/pre-tokenize/eval/*.npy"
+python eval/run_zero_shot.py ckpt/hf/hc-400M-L24/step7600 --device cuda:0 --batch-size 32
 ```
+
+Add `--include "step7600/*" "tokenizer/*"` to skip the step-0 checkpoint.
+
+## Installation
+
+DepthBench targets Linux x86_64 with NVIDIA GPUs (experiments were run on H100). The reference environment
+is Python 3.10, PyTorch 2.8.0 + CUDA 12.8, Triton 3.4 and Liger Kernel 0.8. It uses a **modified OLMo-core**,
+vendored in [`pretrain/OLMo-core`](pretrain/OLMo-core). Do not install `ai2-olmo-core` from PyPI.
+
+```bash
+git clone https://github.com/keyu-wang-2002/DepthBench.git
+cd DepthBench
+bash environment/install.sh          # creates .venv-cu128 with pinned dependencies
+source .venv-cu128/bin/activate
+```
+
+The installer builds a fresh venv, installs the local OLMo-core, puts official FLA 0.4.1 in an isolated
+overlay for AttnRes, and runs `pip check`. It covers Pre-LN, Peri-LN, LNS, DeepNorm, KEEL,
+depth-μP/CompleteP, HC and mHC out of the box. A Conda recipe is also available in
+[`environment/README.md`](environment/README.md).
+
+> [!IMPORTANT]
+> **MoDA** and **AttnRes** need two different, mutually incompatible `fla` packages. Choose one per process
+> with `PYTHONPATH` before launching. See [Select Dependencies](environment/README.md#select-dependencies)
+> and [MoDA Kernel](environment/README.md#moda-kernel).
+
+All commands below are run from the repository root.
 
 ## Data Preparation
 
-### 1. Download FineWeb-Edu
+All models are pre-trained on [FineWeb-Edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu)
+(`sample/100BT`) with the GPT-NeoX/OLMo tokenizer bundled in OLMo-core.
 
-Download the FineWeb-Edu parquet shards: https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu/tree/main/sample/100BT
+**1. Download** the parquet shards from [`sample/100BT`](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu/tree/main/sample/100BT)
+into `data/fineweb-edu/100BT/`, and hold out one shard for evaluation:
 
-split evaluation data:
 ```bash
-mv data/100BT/013_00008.parquet data/eval/eval_013_00008.parquet
+mkdir -p data/fineweb-edu/eval
+mv data/fineweb-edu/100BT/013_00008.parquet data/fineweb-edu/eval/eval_013_00008.parquet
 ```
 
-### 2. Pre-tokenize the dataset
-
-We use gpt-neox tokenizer
+**2. Pre-tokenize** into `.npy` token shards. The training set can be split across several processes
+with `--train-worker-id` / `--train-num-workers`:
 
 ```bash
 python data_utils/tokenize_from_pretrain_datasets.py \
@@ -46,358 +144,240 @@ python data_utils/tokenize_from_pretrain_datasets.py \
   --eval-parquet-path "data/fineweb-edu/eval/eval_013_00008.parquet" \
   --output-dir "data/fineweb-edu/pre-tokenize" \
   --text-field "text" \
-  --tokenizer-name-or-path "./pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
-  --vocab-size 50280 \
-  --eos-token-id 50279 \
-  --pad-token-id 1 \
+  --tokenizer-name-or-path "pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
+  --vocab-size 50280 --eos-token-id 50279 --pad-token-id 1 \
   --batch-size 4096 \
-  --progress-log-interval-docs 8192 \
-  --write-doc-indices \
-  --skip-existing \
-  --skip-summary \
-  --train-worker-id 2 \
-  --train-num-workers 32
+  --write-doc-indices --skip-existing \
+  --train-worker-id 0 --train-num-workers 1
 ```
 
-After pre-tokenization, the expected output layout is:
+The result is `data/fineweb-edu/pre-tokenize/{train,eval}/*.npy`, which is the default data location for
+every training script.
 
-```text
-data/fineweb-edu/pre-tokenize/train/*.npy
-data/fineweb-edu/pre-tokenize/eval/*.npy
-```
+## Training
 
-## Model Config
+### Model Configs
 
-The following model configs are currently available under: [`./configs`](./configs)
+Model shapes are plain Llama-style JSON files in [`configs/`](configs). They include a 400M series that
+sweeps depth from 16 to 70 layers at fixed total size, a 300M series at fixed backbone size, a
+200M–500M depth-scaling ladder, and 1.6B shapes based on Qwen3-1.7B. Each series keeps parameter count
+within ±3%.
 
+| Tier | Example config | Layers | Hidden | Tokens | Steps |
+|---|---|---:|---:|---:|---:|
+| 200M | `llama_200m_L18.json` | 12 – 24 | 672 – 896 | 4B | 3.8k |
+| 300M | `llama_300m_L21.json` | 14 – 28 | 800 – 1056 | 6B | 5.7k |
+| 400M | `llama_400m_L24.json` | 16 – 70 | 640 – 1216 | 8B | 7.6k |
+| 500M | `llama_500m_L26.json` | 17 – 34 | 992 – 1344 | 10B | 9.5k |
+| 1.6B | `llama_1600m_L28.json` | 28 – 54 | 1504 – 2048 | 32B | 30.4k |
 
-| Size | Hidden | Intermediate | Heads | Layers | Data Volume | Batch Size | Sequence Length | Steps |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| 400M | 1024 | 2736 | 16 | 24 | 8B | 512 | 2048 | 7.6k |
+See [`configs/README.md`](configs/README.md) for every shape, including parameter counts and the design rules.
 
-### 400M Aspect-Ratio Variants （Fix Total Size）
+### Launching a Run
 
-| Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size  | Total Size | Total Diff |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 16 | 1216 | 3248 | 16 | 76 | 76.00 | 284M | 407M | +0.28% |
-| 20 | 1120 | 2992 | 16 | 70 | 56.00 | 301M |  414M | +2.14% |
-| 24 | 1024 | 2736 | 16 | 64 | 42.67 | 302M |  405M | 0.00% |
-| 26 | 992 | 2656 | 16 | 62 | 38.15 | 308M |  408M | +0.56% |
-| 28 | 960 | 2560 | 16 | 60 | 34.29 | 310M |  406M | +0.21% |
-| 30 | 928 | 2480 | 16 | 58 | 30.93 | 311M |  404M | -0.38% |
-| 32 | 896 | 2400 | 16 | 56 | 28.00 | 309M |  399M | -1.49% |
-| 36 | 864 | 2304 | 16 | 54 | 24.00 | 323M |  409M | +0.99% |
-| 42 | 800 | 2144 | 16 | 50 | 19.05 | 324M |  404M | -0.31% |
-| 50 | 736 | 1968 | 16 | 46 | 14.72 | 326M |  400M | -1.41% |
-| 56 | 704 | 1888 | 16 | 44 | 12.57 | 334M |  405M | -0.05% |
-| 62 | 672 | 1792 | 16 | 42 | 10.84 | 336M |  404M | -0.44% |
-| 70 | 640 | 1712 | 16 | 40 | 9.14 | 345M |  409M | +0.94% |
-
-
-
-Design Principle
-```
-heads = 16
-head_dim is oven
-hidden = heads * head_dim
-intermediate = ceil(hidden * 8/3, multiple=16)
-Keep total size 405M +- 3%
-```
-
-### 300M Backbone Aspect-Ratio Variants （Fix Backbone Size）
-
-| Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Backbone Diff | Total Size | 
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | 
-| 16 | 1248 | 3328 | 16 | 78 | 78.00 | 299M | -1.11% | 425M | 
-| 24 (*) | 1024 | 2736 | 16 | 64 | 42.67 | 302M | +0.00% | 405M | 
-| 32 (*) | 896 | 2400 | 16 | 56 | 28.00 | 309M | +2.26% | 399M | 
-| 42 | 768 | 2048 | 16 | 48 | 18.29 | 297M | -1.69% | 375M | 
-| 56 | 672 | 1792 | 16 | 42 | 12.00 | 304M | +0.37% | 371M | 
-| 70 | 608 | 1632 | 16 | 38 | 8.69 | 312M | +3.15% | 373M | 
-| 84 | 544 |  1456 | 16 |   34 |  6.48 |  299M | -0.99%  | 354M |
-
-
-Design Principle
-```
-heads = 16
-head_dim is oven
-hidden = heads * head_dim
-intermediate = ceil(hidden * 8/3, multiple=16)
-Keep backbone size 302M +- 3%
-```
-
-## 1B scale
-
-Ref Qwen3-1.7B same shape:
-| Size | Hidden | Intermediate | Q_Heads | KV_heads | Layers | Data Volume | Batch Size | Sequence Length | Steps |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1.6B | 2048 | 6144 | 16 | 8 | 28 | 32B | 512 | 2048 | 30.4k |
-
-
-| Layers | Hidden | Intermediate | Q Heads | KV Heads | head_dim | Aspect Ratio | Backbone Size | Total Size | Total Diff |
-| -----: | -----: | -----------: | ------: | -------: | -------: | -----------: | ------------: | ---------: | ---------: |
-|     28 |   2048 |         6144 |      16 |        8 |      128 |    **73.14** |        1.409B | **1.615B** |      0.00% |
-|     34 |   1888 |         5664 |      16 |        8 |      118 |    **55.53** |        1.454B | **1.644B** |     +1.79% |
-|     40 |   1728 |         5184 |      16 |        8 |      108 |    **43.20** |        1.433B | **1.607B** |     −0.51% |
-|     48 |   1600 |         4800 |      16 |        8 |      100 |    **33.33** |        1.475B | **1.636B** |     +1.25% |
-|     54 |   1504 |         4512 |      16 |        8 |       94 |    **27.85** |        1.466B | **1.617B** |     +0.11% |
-
-
-Sweep LR in {2e-3, 1e-3, 5e-4, 2e-4} on the Pre-LN base shape (L28, d2048) (hard stop at half data?). Apply this uniform optimal LR to all shapes for Pre-LN, HC, AttnRes
-
-
-## Depth Scaling Ladder
-
-LR = 2e-3, {Pre-LN, HC, Full AttnRes}
-
-### 200M -- 4B -- 3.8k steps
-
-| Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Total Size | Total Diff |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 24 | 672 | 1792 | 16 | 42 | 28.00 | 130M | 198M | -3.42% |
-| 18 | 768 | 2048 | 16 | 48 | 42.67 | 127M | 205M | 0.00% |
-| 12 | 896 | 2400 | 16 | 56 | 74.67 | 116M | 206M | +0.69% |
-
-### 300M -- 6B -- 5.7k steps
-
-| Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Total Size | Total Diff |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 28 | 800 | 2144 | 16 | 50 | 28.57 | 216M | 296M | +1.09% |
-| 21 | 896 | 2400 | 16 | 56 | 42.67 | 203M | 293M | 0.00% |
-| 14 | 1056 | 2816 | 16 | 66 | 75.43 | 187M | 294M | +0.18% |
-
-### 400M (already done)
-
-| Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Total Size | Total Diff |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 32 | 896 | 2400 | 16 | 56 | 28.00 | 309M | 399M | -1.49% |
-| 24 | 1024 | 2736 | 16 | 64 | 42.67 | 302M | 405M | 0.00% |
-| 16 | 1216 | 3248 | 16 | 76 | 76.00 | 284M | 406M | +0.28% |
-
-### 500M -- 10B -- 9.5k steps
-
-| Layers | Hidden | Intermediate | Heads | head_dim | Aspect Ratio | Backbone Size | Total Size | Total Diff |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 34 | 992 | 2656 | 16 | 62 | 29.18 | 403M | 502M | -0.42% |
-| 26 | 1120 | 2992 | 16 | 70 | 43.08 | 392M | 504M | 0.00% |
-| 17 | 1344 | 3584 | 16 | 84 | 79.06 | 368M | 504M | -0.16% |
-
-
-
-## Training Script
-
-Example:
+Every entrypoint takes the same arguments. A minimal 400M Pre-LN run on 8 GPUs:
 
 ```bash
-cd ./examples
-bash pretrain_400m.sh
+torchrun --nproc_per_node=8 examples/pretrain_preln.py \
+  --run_name=pretrain-preln-400M-lr2e-3 \
+  --model-config=configs/llama_400m_L24.json \
+  --max-steps=7600 --warmup-steps=760 \
+  --global-train-batch-size=512 --device-train-microbatch-size=16 \
+  --learning-rate=2e-3 \
+  --save-folder=ckpt/depthbench/pretrain-preln-400M-lr2e-3
 ```
 
-Note: DepthBench now supports per-layer monitoring of hidden-state statistics during pretraining. For each transformer block, we record statistics for both `forward`, the block output hidden state,
-and `backward`, the activation gradient on the same hidden state.
+To train a different architecture, swap the entrypoint (see [Models](#models)).
 
-For both directions, the following statistics are logged: `mean`, `variance`, `magnitude = abs().mean()`, `norm = l2_norm`
+<details>
+<summary>Architecture-specific options</summary>
 
-This adds two CLI flags:
+| Architecture | Entrypoint | Extra arguments |
+|---|---|---|
+| Pre-LN / Peri-LN / LNS / DeepNorm / KEEL | `pretrain_{preln,periln,lns,deepnorm,keel}.py` | none |
+| Depth-μP / CompleteP | `pretrain_preln_mup.py` | `--parameterization {depth-muP,completeP} --scaling-axis {depth-only,depth-width} --base-depth 24 --base-width 1024` |
+| HC | `pretrain_hc.py` | none (4 residual streams) |
+| mHC | `pretrain_mhc.py` | `--mhc-backend {liger_mhc,mhc_static,mhc}` (default: fused Liger) |
+| Full AttnRes | `pretrain_attnres.py` | none (`model.block.attnres_block_size=1` is the default) |
+| Block AttnRes | `pretrain_attnres.py` | `model.block.attnres_block_size=<N>` |
+| MoDA | `pretrain_moda.py` / `pretrain_postnorm_moda.py` | none (needs the MoDA dependency selection) |
 
-- `--enable-layer-stats`
-- `--layer-stats-interval 1` means record every step. Set it to a larger value to reduce logging overhead.
+Any other field of the OLMo-core experiment config can be overridden with trailing
+`dotted.key=value` arguments, as in the AttnRes rows above.
 
-These metrics are automatically logged to W&B when W&B is enabled. W&B may create many charts because every block and every statistic is logged separately. A convenient way to view them is to create multi-metric panels with regex, for example:
+</details>
+
+<details>
+<summary>Common arguments</summary>
+
+| Argument | Default | Description |
+|---|---|---|
+| `--model-config` | `configs/llama_400m_L24.json` | Model shape |
+| `--train-data-glob` / `--eval-data-glob` | `data/fineweb-edu/pre-tokenize/{train,eval}/*.npy` | Pre-tokenized data |
+| `--max-steps` / `--warmup-steps` | `7600` / `760` | Cosine schedule with linear warmup |
+| `--global-train-batch-size` | `512` | Sequences per optimizer step |
+| `--device-train-microbatch-size` | `16` | Per-GPU micro-batch; lower it for deep or wide shapes |
+| `--learning-rate` | `1e-3` | Peak AdamW learning rate (`2e-3` in our 400M runs) |
+| `--max-grad-norm` | `1.0` | Set ≤ 0 to disable clipping |
+| `--eval-interval` / `--save-interval` | `200` / `10000` | In steps |
+| `--save-folder` | – | Checkpoint directory |
+| `--load-path` / `--load-trainer-state` | – | Resume or initialize from a checkpoint |
+| `--wandb-project` / `--wandb-entity` | `depthbench` / none | Set `--wandb-project ""` to disable W&B |
+
+</details>
+
+Ready-to-run scripts:
+
+- [`examples/pretrain_400m.sh`](examples/pretrain_400m.sh) — every architecture at the 400M base shape.
+- [`examples/pretrain_hyper_connections_shape.sh`](examples/pretrain_hyper_connections_shape.sh) — HC/mHC over the 400M depth sweep (`METHOD=hc|mhc SHAPE=L16 ...`).
+- [`examples/pretrain_moda_shape.sh`](examples/pretrain_moda_shape.sh) — MoDA and its post-norm baseline over the depth sweep (`VARIANT=prenorm_moda SHAPE=L16 ...`).
+
+### Layer Statistics
+
+Pass `--enable-layer-stats` to log per-block statistics of the hidden state (`forward`) and of its
+gradient (`backward`): `mean`, `variance`, `magnitude` (= `abs().mean()`) and `norm` (L2).
+`--layer-stats-interval N` logs every N steps. The metrics go to W&B, where regex panels keep them readable:
 
 ```text
 ^train/layer_stats/block_\d+/forward/norm$
 ^train/layer_stats/block_\d+/backward/norm$
 ```
 
+## Depth Analysis
 
+All analysis scripts in [`analysis/`](analysis) load **native OLMo-core checkpoints**, so no Hugging Face
+conversion is needed. They detect the architecture automatically.
 
-## Analysis
+### Calibration Data
 
-This directory contains scripts for running DepthBench analysis metrics directly on native `OLMo-core` checkpoints.
-
-Build calibration text first:
+The Jacobian and usefulness analyses read a text calibration set mixed from FineWeb-Edu, C4 and Dolma:
 
 ```bash
 python data_utils/build_calibration_data.py \
-  --source fineweb_local \
-  --source c4 \
-  --source dolma \
-  --output-dir data/calibration \
-  --output-prefix calibration \
-  --tokenizer-name-or-path ./pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json \
+  --source fineweb_local --source c4 --source dolma \
+  --output-dir data/calibration --output-prefix calibration \
+  --tokenizer-name-or-path pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json \
   --target-total-tokens 262144 \
-  --sample-length-mode fixed \
-  --sample-length 512 \
+  --sample-length-mode fixed --sample-length 512 \
   --shuffle-samples
 ```
 
-This writes `data/calibration/calibration.txt`, `data/calibration/calibration.jsonl`, and
-`data/calibration/calibration.summary.json`. Use the `.txt` file in the analysis commands below.
+This writes `data/calibration/calibration.{txt,jsonl,summary.json}`. Use `--sample-length-mode uniform` with
+`--min-sample-length` / `--max-sample-length` for variable-length windows.
 
-Common options:
+### Depth Metrics
 
-- `--source`, repeat to mix multiple corpora; defaults to `fineweb_local`, `c4`, and `dolma`
-- `--sample-length-mode {fixed,uniform}`, choose fixed-length or variable-length text windows
-- `--sample-length`, token length for fixed mode
-- `--min-sample-length` and `--max-sample-length`, token-length range for uniform mode
-- `--target-total-tokens`, total token budget across all sources
-- `--shuffle-samples`, shuffle collected samples before writing the output files
+Each metric is defined over *depth states* `z_0, ..., z_L` (`z_0` is the embedding output) and two
+single-block interventions, *skip* and *swap*. [`analysis/depth_probes.py`](analysis/depth_probes.py)
+implements these consistently for all three architecture families:
 
+| Family | Depth state `z_l` | Skipping block `l` | Swapping blocks `i, j` | Logit-lens readout |
+|---|---|---|---|---|
+| Residual (Pre-LN, Peri-LN, LNS, DeepNorm, KEEL, MoDA) | block output | identity (MoDA writes no depth-KV slots) | all learned block weights (LNS `ln_scale` travels with them) | `z_l` |
+| HC / mHC | all residual streams, concatenated | identity on the streams | block weights incl. its hyper-connection parameters | stream sum (= mean after the final RMSNorm) |
+| Full / Block AttnRes | depth mix at AttnRes boundaries, block output inside a block group | no source-bank entry; the next boundary mix becomes the identity on its newest source | core weights + the depth-mixing parameters producing its right boundary | the next consumer's depth mix |
 
-Run angular distance:
-
-```bash
-python analysis/compute_angular_distance.py \
-  --model_path ckpt/path/to/ckpt \
-  --output_dir analysis/results/angular_distance \
-  --text-file data/calibration/calibration.txt \
-  --num_samples 1024 \
-  --seq_length 512
-```
-
-Run Jacobian analysis:
+Every script takes `--model_path` (a `step*` checkpoint, or a run directory whose latest step is used) and
+`--output_dir`, and samples `--num_samples` windows of `--seq_length` tokens from `--token-data-glob`
+(or `--text-file` / `--prompt`). Each run writes `results.json`, a figure and the raw arrays.
 
 ```bash
-python analysis/compute_jacobian.py \
-  --model_path ckpt/path/to/ckpt \
-  --output_dir analysis/results/jacobian \
-  --text-file data/calibration/calibration.txt \
-  --num_samples 128 \
-  --seq_length 512
+EVAL_GLOB="data/fineweb-edu/pre-tokenize/eval/*.npy"
+CKPT=ckpt/depthbench/pretrain-preln-400M-lr2e-3
+
+# Angular distance   d(i,j) = mean_t arccos cos(z_i, z_j) / pi
+python analysis/compute_angular_distance.py --model_path $CKPT --output_dir results/angular \
+  --token-data-glob "$EVAL_GLOB" --num_samples 128 --seq_length 512
+
+# Causal score       C(s,l) = mean_t ||u_l^{skip s} - u_l|| / ||u_l||,  u_l = z_{l+1} - z_l
+python analysis/compute_causal_score.py --model_path $CKPT --output_dir results/causal \
+  --token-data-glob "$EVAL_GLOB" --num_samples 16 --seq_length 256
+
+# Permutation score  P(i,j) = |L_swap(i,j) - L| / L
+python analysis/compute_permutation_score.py --model_path $CKPT --output_dir results/permutation \
+  --token-data-glob "$EVAL_GLOB" --num_samples 12 --seq_length 256
+
+# Logit lens: early-exit CE, KL(p_final || p_l) and top-5 overlap per depth state
+python analysis/compute_logit_lens.py --model_path $CKPT --output_dir results/logit_lens \
+  --token-data-glob "$EVAL_GLOB" --num_samples 32 --seq_length 512
+
+# Single-layer pruning, on LM loss ...
+python analysis/compute_layer_pruning.py --model_path $CKPT --output_dir results/pruning_loss \
+  --token-data-glob "$EVAL_GLOB" --num_samples 16 --seq_length 256
+# ... or on a zero-shot lm-eval task (resumable per layer)
+python analysis/compute_layer_pruning.py --model_path $CKPT --output_dir results/pruning_arc_easy \
+  --task arc_easy --resume
 ```
 
-Run causal score:
+`--micro_batch_size` trades memory for speed. On CPU, the Triton kernels (AttnRes, Liger mHC) fall back to
+PyTorch automatically. On GPU, set `DEPTHBENCH_USE_LIGER_MHC_FALLBACK=1` to force the PyTorch mHC path.
+
+### Other Analyses
 
 ```bash
-python analysis/compute_causal_score.py \
-  --model_path ckpt/path/to/ckpt \
-  --output_dir analysis/results/causal_score \
-  --text-file data/calibration/calibration.txt \
-  --num_samples 128 \
-  --seq_length 512
+# Input–output Jacobian of each block
+python analysis/compute_jacobian.py --model_path $CKPT --output_dir results/jacobian \
+  --text-file data/calibration/calibration.txt --num_samples 128 --seq_length 512
+
+# Per-layer usefulness score
+python analysis/compute_usefulness_score.py --model_path $CKPT --output_dir results/usefulness \
+  --text-file data/calibration/calibration.txt --num_samples 1024 --seq_length 512
 ```
 
-Run permutation score:
+## Evaluation
+
+[`eval/olmo_lm.py`](eval/olmo_lm.py) wraps a native OLMo-core checkpoint as an
+[`lm-evaluation-harness`](https://github.com/EleutherAI/lm-evaluation-harness) model (`lm-eval==0.4.12` is in the pinned environment).
+
+**Zero-shot commonsense.** Covers OpenBookQA, WinoGrande, ARC-Challenge, ARC-Easy, HellaSwag, Social IQa and PIQA:
 
 ```bash
-python analysis/compute_permutation_score.py \
-  --model_path ckpt/path/to/ckpt \
-  --output_dir analysis/results/permutation_score \
-  --text-file data/calibration/calibration.txt \
-  --num_samples 128 \
-  --seq_length 512
+python eval/run_zero_shot.py ckpt/depthbench/pretrain-preln-400M-lr2e-3/step7600 \
+  --device cuda:0 --batch-size 32 --attention-backend torch \
+  --output-path results/zero_shot.json
 ```
 
-Run usefulness score:
+**Completion NLL on coding / STEM / math.** Covers MBPP, HumanEval, SciQ, GPQA-Diamond, GSM8K and MATH-500:
 
 ```bash
-python analysis/compute_usefulness_score.py \
-  --model_path ckpt/path/to/ckpt \
-  --output_dir analysis/results/usefulness_score \
-  --text-file data/calibration/calibration.txt \
-  --num_samples 1024 \
-  --seq_length 512
+python eval/run_nll_eval_math_coding_stem.py ckpt/depthbench/pretrain-preln-400M-lr2e-3/step7600 \
+  --device cuda:0 --batch-size 8 --output-path results/nll.json
 ```
 
-## Downstream Evaluation
-
-### Supervised Finetuning
-
-This repo includes a minimal OLMo-core based SFT pipeline for finetuning a pre-train checkpoint
-on `Commonsense170K`.
-
-The main entrypoints are:
-
-- [`eval/finetune/prepare_commonsense170k.py`](./eval/finetune/prepare_commonsense170k.py) for dataset preparation
-- [`eval/finetune/sft_llama_base.py`](./eval/finetune/sft_llama_base.py) for training
-
-Prepare the dataset with:
-
-```bash
-python3 eval/finetune/prepare_commonsense170k.py \
-  --output-dir data/commonsense-170k-olmocore \
-  --tokenizer-name-or-path ./pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json \
-  --max-seq-len 512 \
-  --part-size 1000000 \
-  --seed 42
-```
-
-Common options:
-
-- `--dataset-name`, default `zwhe99/commonsense_170k`
-- `--dataset-split`, default `train`
-- `--max-samples`, use a subset for quick debugging
-
-The dataset is written as flat `token_ids_part_*.npy` and `labels_mask_part_*.npy` files. The
-supervised loss is applied only on the response span and the final EOS token.
-
-The prompt template is:
+## Repository Structure
 
 ```text
-Below is an instruction that describes a task. Write a response that appropriately completes the request.
-
-### Instruction:
-{instruction}
-
-### Response:
+DepthBench/
+├── configs/            # model shapes (Llama-style JSON), see configs/README.md
+├── examples/           # training entrypoints, one per architecture, and launch scripts
+├── analysis/           # depth probes and metrics on native OLMo-core checkpoints
+├── eval/               # lm-eval adapter, zero-shot and NLL evaluation
+├── data_utils/         # FineWeb-Edu pre-tokenization, calibration-set builder
+├── config_utils/       # JSON config → OLMo-core model/tokenizer config
+├── environment/        # pinned CUDA 12.8 environment, installer, MoDA kernel patch
+├── docs/               # implementation notes for HC/mHC and MoDA
+├── assets/             # logo
+└── pretrain/OLMo-core/ # modified OLMo-core with all DepthBench block types
 ```
 
-If `input` is non-empty, an additional `### Input:` section is inserted.
+## Citation
 
-Launch SFT with:
+If you find DepthBench useful, please cite:
 
-```bash
-torchrun --nproc_per_node=8 eval/finetune/sft_llama_base.py \
-  --run-name llama-1B-commonsense170k-sft \
-  --model-config ./configs/llama_1B_backbone.json \
-  --pretrain-checkpoint ckpt/depthbench/pretrain-llama-1B-lr5e-4 \
-  --dataset-dir data/commonsense-170k-olmocore \
-  --save-folder ckpt/depthbench/llama-1B-commonsense170k-sft \
-  --tokenizer-name-or-path ./pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json \
-  --learning-rate 5e-5 \
-  --dataset-layout padded \
-  --disable-compile
+```bibtex
+@misc{depthbench2026,
+  title  = {DepthBench},
+  author = {TODO},
+  year   = {2026},
+  note   = {TODO: arXiv link},
+  url    = {https://github.com/keyu-wang-2002/DepthBench}
+}
 ```
 
-Common options:
+## Acknowledgements
 
-- `--sequence-length`, default `512`
-- `--epochs`, default `3`
-- `--global-train-batch-size`, default `128`
-- `--device-train-microbatch-size`, default `16`
-- `--dataset-layout {packed,padded}`, default `padded`
-
-Typically, we use about 1/10 of the pre-train learning rate for SFT, or do a small sweep around
-that value.
-
-### Zero-shot Evaluation
-
-This repo supports zero-shot downstream evaluation directly from native `OLMo-core` checkpoints,
-without converting the checkpoint to Hugging Face format first.
-
-The current zero-shot task set is:
-
-- `openbookqa`
-- `winogrande`
-- `arc_challenge`
-- `arc_easy`
-- `hellaswag`
-- `social_iqa`
-- `piqa`
-
-The entrypoint is [`eval/run_zero_shot.py`](./eval/run_zero_shot.py), which uses:
-
-- [`eval/olmo_lm.py`](./eval/olmo_lm.py) as the adapter from native `OLMo-core` checkpoints to `lm-eval-harness`
-- the vendored [`eval/lm-evaluation-harness`](./eval/lm-evaluation-harness) task definitions
-
-Run zero-shot evaluation with:
-
-```bash
-python eval/run_zero_shot.py \
-  /path/to/checkpoint/step2600 \
-  --device cuda:0 \
-  --batch-size 32 \
-  --attention-backend torch \
-  --output-path /path/to/output/zero_shot_results.json
-```
+DepthBench is built on [OLMo-core](https://github.com/allenai/OLMo-core) (Apache-2.0). We thank the
+authors of [flash-linear-attention](https://github.com/fla-org/flash-linear-attention),
+[Liger Kernel](https://github.com/linkedin/Liger-Kernel), [MoDA](https://github.com/hustvl/MoDA) and
+[lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) for their open-source kernels
+and tools, and the authors of every architecture listed in [Models](#models).
