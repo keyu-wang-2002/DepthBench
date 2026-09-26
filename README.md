@@ -80,22 +80,23 @@ They cover most architectures above at several depths, plus learning-rate sweeps
 | Block AttnRes | 400M (L16–L32), 500M (L34) |
 
 Depth-sweep repositories are named `<arch>-lr<lr>-llama-<size>-L<layers>-pretrain`, for example
-[`hc-lr2e-3-llama-400M-L24-pretrain`](https://huggingface.co/aspect-ratio-scaling/hc-lr2e-3-llama-400M-L24-pretrain).
-Each repository is a **raw OLMo-core distributed checkpoint**, not a `transformers` export. It holds the
-initial and final step directories (`step0/`, `step<N>/`, each with its `config.json`) and the tokenizer.
-Every analysis and evaluation script in this repository loads them directly:
+[`preln-lr2e-3-llama-400M-L24-pretrain`](https://huggingface.co/aspect-ratio-scaling/preln-lr2e-3-llama-400M-L24-pretrain).
+Each repository is a **raw OLMo-core distributed checkpoint**, not a `transformers` export. Most hold
+`step*/` directories (initial, intermediate and final steps, each with its `config.json`) plus the
+tokenizer; others store the final checkpoint (`config.json` + `model_and_optim/`) directly at the repository
+root. Every analysis and evaluation script in this repository loads either layout directly:
 
 ```bash
-huggingface-cli download aspect-ratio-scaling/hc-lr2e-3-llama-400M-L24-pretrain \
-  --local-dir ckpt/hf/hc-400M-L24
+huggingface-cli download aspect-ratio-scaling/preln-lr2e-3-llama-400M-L24-pretrain \
+  --local-dir ckpt/hf/preln-400M-L24
 
 # a run directory resolves to its latest step
-python analysis/compute_angular_distance.py --model_path ckpt/hf/hc-400M-L24 \
+python analysis/compute_angular_distance.py --model_path ckpt/hf/preln-400M-L24 \
   --output_dir results/angular --token-data-glob "data/fineweb-edu/pre-tokenize/eval/*.npy"
-python eval/run_zero_shot.py ckpt/hf/hc-400M-L24/step7600 --device cuda:0 --batch-size 32
+python eval/run_zero_shot.py ckpt/hf/preln-400M-L24/step7600 --device cuda:0 --batch-size 32
 ```
 
-Add `--include "step7600/*" "tokenizer/*"` to skip the step-0 checkpoint.
+For step-directory repositories, add `--include "step7600/*" "tokenizer/*"` to download only the final step.
 
 ## Installation
 
