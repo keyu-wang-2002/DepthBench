@@ -18,11 +18,11 @@ case "${SHAPE}" in
     L16|L20|L24)
         DEFAULT_DEVICE_MICROBATCH_SIZE=8
         ;;
-    L26|L28|L30|L32|L36|L42|L50|L56|L62|L70)
+    L28|L32|L42|L70)
         DEFAULT_DEVICE_MICROBATCH_SIZE=4
         ;;
     *)
-        echo "Unsupported SHAPE=${SHAPE}; expected a 400M shape in configs/ (L16 through L70)" >&2
+        echo "Unsupported SHAPE=${SHAPE}; expected a 400M shape in configs/ (L16, L20, L24, L28, L32, L42 or L70)" >&2
         exit 2
         ;;
 esac
