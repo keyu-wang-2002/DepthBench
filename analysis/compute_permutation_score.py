@@ -1,145 +1,139 @@
-"""
-Pairwise layer weight-swap score: keep the architecture and layer positions fixed,
-swap only the learned weights of two layers, and measure the relative change in next-token loss. 
-Higher scores indicate less interchangeable, more position-specific layer weights.
+"""Pairwise weight-swap (permutation) score.
+
+P(i, j) = |L_swap(i, j) - L| / L, where L is the next-token loss of the original model and
+L_swap(i, j) the loss after exchanging the learned weights of blocks i and j while the
+architecture stays fixed. Higher scores mean less interchangeable, more position-specific
+blocks. What a block's weights comprise per architecture is defined in `depth_probes.py`.
 """
 
 import argparse
-import json
 from pathlib import Path
 
-from analysis_utils import build_sample_batch, get_decoder_layers, load_model_and_tokenizer
-from layer_score_utils import (
-    compute_all_permutation_scores,
-    compute_global_permutation_score,
-    plot_permutation_scores,
-)
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
+from tqdm import tqdm
+
+from analysis_utils import add_model_args, get_decoder_layers, load_eval_input_ids, load_model_and_tokenizer, write_json
+from depth_probes import describe_architecture, mean_lm_loss, swapped_blocks
 
 
-def build_layer_pairs(args, num_layers: int):
-    layer_pairs = []
+def compute_permutation_scores(
+    model,
+    input_ids,
+    layer_pairs: list[tuple[int, int]],
+    *,
+    micro_batch_size: int,
+    device: str,
+    dtype,
+) -> tuple[float, dict[tuple[int, int], float]]:
+    loss_kwargs = dict(micro_batch_size=micro_batch_size, device=device, dtype=dtype)
+    baseline_loss = mean_lm_loss(model, input_ids, **loss_kwargs)
+    scores = {}
+    for i, j in tqdm(layer_pairs, desc="Permutation score"):
+        with swapped_blocks(model, i, j):
+            swapped_loss = mean_lm_loss(model, input_ids, **loss_kwargs)
+        scores[(i, j)] = abs(swapped_loss - baseline_loss) / baseline_loss
+    return baseline_loss, scores
 
-    if not (args.skip_layer_1_with_next or args.skip_layer_2_with_rest or args.skip_layer_3_with_rest):
-        for layer1_idx in range(num_layers):
-            for layer2_idx in range(layer1_idx + 1, num_layers):
-                layer_pairs.append((layer1_idx, layer2_idx))
-        return layer_pairs
 
-    if args.skip_layer_1_with_next and 1 < num_layers - 1:
-        layer_pairs.append((1, 2))
+def plot_permutation_scores(scores: dict[tuple[int, int], float], num_layers: int, output_path: Path) -> None:
+    matrix = np.full((num_layers, num_layers), np.nan)
+    for (i, j), score in scores.items():
+        matrix[i, j] = score
+    mask = np.tril(np.ones_like(matrix, dtype=bool)) | np.isnan(matrix)
+    finite = matrix[~mask]
+    vmin, vmax = (float(finite.min()), float(finite.max())) if finite.size else (0.0, 1.0)
+    if np.isclose(vmin, vmax):
+        vmax = vmin + 1e-6
+    # Shift the neutral colour downward so mid-to-high values appear warmer.
+    norm = TwoSlopeNorm(vmin=vmin, vcenter=vmin + 0.4 * (vmax - vmin), vmax=vmax)
+    cmap = LinearSegmentedColormap.from_list("permutation_score", ["#0b3c78", "#f7f3ec", "#7b001c"])
+    cmap.set_bad(color="white")
 
-    if args.skip_layer_2_with_rest:
-        for layer2_idx in range(2, num_layers):
-            if layer2_idx != 2:
-                layer_pairs.append((2, layer2_idx))
+    plt.figure(figsize=(8, 7))
+    sns.heatmap(
+        matrix,
+        cmap=cmap,
+        norm=norm,
+        mask=mask,
+        cbar_kws={"label": "Permutation Score"},
+        xticklabels=range(num_layers),
+        yticklabels=range(num_layers),
+        linewidths=0.3,
+        linecolor=(1.0, 1.0, 1.0, 0.45),
+        square=True,
+    )
+    plt.xlabel("Layer Index")
+    plt.ylabel("Layer Index")
+    plt.title("Permutation Score")
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
 
-    if args.skip_layer_3_with_rest:
-        for layer2_idx in range(3, num_layers):
-            if layer2_idx != 3:
-                layer_pairs.append((3, layer2_idx))
 
-    return layer_pairs
+def build_layer_pairs(num_layers: int, anchor_layers: list[int] | None) -> list[tuple[int, int]]:
+    if not anchor_layers:
+        return [(i, j) for i in range(num_layers) for j in range(i + 1, num_layers)]
+    pairs = {tuple(sorted((anchor, other))) for anchor in anchor_layers for other in range(num_layers) if other != anchor}
+    return sorted(pairs)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Compute permutation layer scores")
-    parser.add_argument("--model_path", type=str, required=True, help="OLMo-core checkpoint dir")
+    parser = argparse.ArgumentParser(description="Compute pairwise weight-swap permutation scores")
+    add_model_args(parser, num_samples=12, seq_length=256)
     parser.add_argument(
-        "--output_dir",
-        type=str,
-        default="./permutation_score_results",
-        help="Directory to save results",
-    )
-    parser.add_argument("--num_samples", type=int, default=16, help="Number of token chunks to evaluate")
-    parser.add_argument("--seq_length", type=int, default=256, help="Token chunk length")
-    parser.add_argument("--device", type=str, default="auto", help="Device to use: auto/cpu/cuda/cuda:0")
-    parser.add_argument(
-        "--dtype",
-        type=str,
-        default="auto",
-        choices=["auto", "float32", "float16", "bfloat16"],
-        help="Load dtype for the model",
-    )
-    parser.add_argument("--text-file", type=str, default=None, help="Optional UTF-8 text file used to build samples")
-    parser.add_argument("--prompt", action="append", default=None, help="Optional prompt text; can be repeated")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for sampling")
-    parser.add_argument("--skip_layer_1_with_next", action="store_true", help="Only test layer 1 with layer 2")
-    parser.add_argument("--skip_layer_2_with_rest", action="store_true", help="Only test layer 2 with layers 2-n")
-    parser.add_argument("--skip_layer_3_with_rest", action="store_true", help="Only test layer 3 with layers 3-n")
-    parser.add_argument("--tokenizer-id", type=str, default=None, help="Optional tokenizer override")
-    parser.add_argument(
-        "--max-sequence-length",
+        "--anchor-layer",
         type=int,
+        action="append",
         default=None,
-        help="Optional tokenizer model_max_length override",
+        help="Only test pairs containing this layer; can be repeated. Defaults to all pairs.",
     )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    model, tokenizer, device, model_dtype, resolved_model_path = load_model_and_tokenizer(
-        model_path=args.model_path,
-        device=args.device,
-        dtype=args.dtype,
-        tokenizer_id=args.tokenizer_id,
-        max_sequence_length=args.max_sequence_length,
+    model, tokenizer, device, dtype, checkpoint_dir = load_model_and_tokenizer(
+        args.model_path, args.device, args.dtype, args.tokenizer_id, args.max_sequence_length
     )
+    input_ids, sample_info = load_eval_input_ids(args, tokenizer)
+    architecture = describe_architecture(model)
     num_layers = len(get_decoder_layers(model))
+    print(f"Loaded {checkpoint_dir}: {architecture}")
 
-    print(f"Loaded model from: {resolved_model_path}")
-    print(f"Model has {num_layers} layers")
-
-    sample_data = build_sample_batch(
-        tokenizer=tokenizer,
-        num_samples=args.num_samples,
-        seq_length=args.seq_length,
-        seed=args.seed,
-        text_file=args.text_file,
-        prompts=args.prompt,
-    )
-
-    layer_pairs = build_layer_pairs(args, num_layers)
-    print(f"Testing {len(layer_pairs)} layer pairs...")
-
-    baseline_loss, permutation_scores = compute_all_permutation_scores(
-        model=model,
-        input_ids=sample_data["input_ids"],
-        attention_mask=sample_data["attention_mask"],
+    layer_pairs = build_layer_pairs(num_layers, args.anchor_layer)
+    baseline_loss, scores = compute_permutation_scores(
+        model,
+        input_ids,
+        layer_pairs,
+        micro_batch_size=args.micro_batch_size,
         device=device,
-        model_dtype=model_dtype,
-        num_layers=num_layers,
-        layer_pairs=layer_pairs,
+        dtype=dtype,
     )
-    global_scores = compute_global_permutation_score(permutation_scores, num_layers)
+    plot_permutation_scores(scores, num_layers, output_dir / "permutation_scores_heatmap.png")
 
-    plot_permutation_scores(permutation_scores, num_layers, output_dir / "permutation_scores_heatmap.png")
-
-    print("\nPermutation scores:")
-    for (layer1_idx, layer2_idx), score in sorted(permutation_scores.items()):
-        print(f"  Layers ({layer1_idx}, {layer2_idx}): {score:.4f}")
-
-    print("\nGlobal permutation scores:")
-    print(f"  Mean Score: {global_scores['global_score_mean']:.4f}")
-    print(f"  Normalized Score: {global_scores['global_score_normalized']:.4f}")
-    print(f"  Weighted Score: {global_scores['global_score_weighted']:.4f}")
-
-    results = {
-        "model_path": args.model_path,
-        "resolved_model_path": resolved_model_path,
-        "baseline_loss": float(baseline_loss),
-        "num_layers": num_layers,
-        "num_samples": args.num_samples,
-        "seq_length": args.seq_length,
-        "tested_layer_pairs": [[layer1_idx, layer2_idx] for layer1_idx, layer2_idx in layer_pairs],
-        "permutation_scores": {f"{layer1_idx}_{layer2_idx}": score for (layer1_idx, layer2_idx), score in permutation_scores.items()},
-        "global_permutation_scores": global_scores,
-    }
-
-    with (output_dir / "results.json").open("w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2)
-
-    print(f"\nResults saved to {output_dir}")
+    layer_scores = [[score for pair, score in scores.items() if layer in pair] for layer in range(num_layers)]
+    layer_mean = [float(np.mean(values)) if values else float("nan") for values in layer_scores]
+    write_json(
+        output_dir / "results.json",
+        {
+            "score_type": "permutation_score",
+            "definition": "P(i, j) = |L_swap(i, j) - L| / L with L the mean next-token loss",
+            "model_path": args.model_path,
+            "resolved_model_path": checkpoint_dir,
+            "architecture": architecture,
+            **sample_info,
+            "baseline_loss": baseline_loss,
+            "num_layers": num_layers,
+            "tested_layer_pairs": [list(pair) for pair in layer_pairs],
+            "mean_permutation_score": float(np.mean(list(scores.values()))),
+            "layer_mean_permutation_scores": layer_mean,
+            "permutation_scores": {f"{i}_{j}": score for (i, j), score in scores.items()},
+        },
+    )
+    print(f"Baseline loss {baseline_loss:.4f}, mean permutation score {np.mean(list(scores.values())):.4f}")
+    print(f"Results saved to {output_dir}")
 
 
 if __name__ == "__main__":

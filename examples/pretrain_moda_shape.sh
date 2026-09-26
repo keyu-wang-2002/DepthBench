@@ -15,9 +15,9 @@ DATA_ROOT="${DATA_ROOT:-data/fineweb-edu/pre-tokenize}"
 SAVE_ROOT="${SAVE_ROOT:-ckpt/depthbench}"
 
 case "${SHAPE}" in
-    L16|L20|L24|L26|L28|L30|L32) ;;
+    L16|L20|L24|L28|L32) ;;
     *)
-        echo "Unsupported SHAPE=${SHAPE}; expected L16, L20, L24, L26, L28, L30, or L32" >&2
+        echo "Unsupported SHAPE=${SHAPE}; expected L16, L20, L24, L28, or L32" >&2
         exit 2
         ;;
 esac

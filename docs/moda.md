@@ -19,16 +19,19 @@ omitted because no later layer reads it.
 
 ## Install
 
-Clone the official repository and install its kernel package into the training
-environment. Apply DepthBench's compatibility patch before installing when the
-target is H100 or a model uses a non-64 head dimension (for example L16's 76 or
-L20's 70):
+Clone the official repository at the pinned commit and apply DepthBench's
+compatibility patch. The patch is required on H100 or when a model uses a
+non-64 head dimension (for example L16's 76 or L20's 70):
 
 ```bash
-git clone https://github.com/hustvl/MoDA.git
-git -C ./MoDA apply ../DepthBench/patches/moda_v17_h100_head_dims.patch
-pip install -e ./MoDA/libs/moda_triton
+git clone https://github.com/hustvl/MoDA.git /path/MoDA
+git -C /path/MoDA checkout ba872a347c2b085ac618c8692de9abd0247a8f4a
+git -C /path/MoDA apply /path/DepthBench/environment/moda-v17-local.patch
 ```
+
+MoDA's fork of FLA conflicts with the official FLA used by AttnRes, so select it
+per process via `PYTHONPATH` instead of installing it globally; see
+[Select Dependencies](../environment/README.md#select-dependencies).
 
 The patch adds explicit H100 dispatch, makes the Triton tiles cover head
 dimensions 70 and 76, preserves explicit tuning overrides, and removes a

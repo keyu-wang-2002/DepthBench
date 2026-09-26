@@ -41,7 +41,7 @@ METHOD=mhc SHAPE=L24 LEARNING_RATE=2e-3 MHC_BACKEND=liger_mhc \
 
 Override `DATA_ROOT`, `SAVE_ROOT`, `NPROC_PER_NODE`, and
 `DEVICE_MICROBATCH_SIZE` for the local cluster layout. The runner supports the
-L16, L20, L24, L26, L28, L30, L32, L36, L42, L50, L56, L62, and L70 configs.
+L16, L20, L24, L28, L32, L42, and L70 configs.
 Its dynamic mHC run names include the backend and `gap8` so new runs do not automatically
 resume a directory created with the old initialization. An explicit `RUN_NAME`
 still takes precedence.

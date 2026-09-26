@@ -275,7 +275,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--eval-max-batches", type=int, default=-1)
     parser.add_argument("--save-interval", type=int, default=10000)
     parser.add_argument("--wandb-project", type=str, default="depthbench")
-    parser.add_argument("--wandb-entity", type=str, default="wang-keyu-2002-max-planck-society")
+    parser.add_argument("--wandb-entity", type=str, default=None)
     parser.add_argument("--load-path", type=str, default=None)
     parser.add_argument("--load-trainer-state", action="store_true")
     parser.add_argument("--enable-layer-stats", action="store_true")
