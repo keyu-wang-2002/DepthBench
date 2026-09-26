@@ -133,6 +133,7 @@ class OLMoNativeLM:
         max_length: Optional[int] = None,
         dtype: Optional[str] = None,
         attention_backend: Optional[str] = None,
+        transformer_config: Optional[Any] = None,
     ):
         from lm_eval.api.model import TemplateLM
 
@@ -157,6 +158,7 @@ class OLMoNativeLM:
         )
         generation_module = TransformerGenerationModule.from_checkpoint(
             checkpoint_dir=checkpoint_dir,
+            transformer_config=transformer_config,
             generation_config=generation_config,
             device=resolved_device,
             **generation_kwargs,

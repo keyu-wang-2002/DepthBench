@@ -1,20 +1,27 @@
 from __future__ import annotations
 
+import argparse
+import glob
 import json
+import os
 import sys
+import types
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from random import Random
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from typing import Iterable, Sequence
+from typing import Iterable, Iterator, Sequence
 
+import numpy as np
 import torch
 import torch.nn as nn
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-OLMO_CORE_SRC = PROJECT_ROOT / "pretrain" / "OLMo-core" / "src"
+OLMO_CORE_SRC = Path(
+    os.environ.get("DEPTHBENCH_OLMO_CORE_SRC", str(PROJECT_ROOT / "pretrain" / "OLMo-core" / "src"))
+)
 if str(OLMO_CORE_SRC) not in sys.path:
     sys.path.insert(0, str(OLMO_CORE_SRC))
 
@@ -90,6 +97,38 @@ def _load_json(path: Path) -> dict:
         return json.load(f)
 
 
+def normalize_experiment_config(config: dict) -> dict:
+    """Make configs written by older DepthBench revisions buildable with the vendored OLMo-core."""
+    tokenizer_config = config.get("dataset", {}).get("tokenizer", {})
+    tokenizer_identifier = tokenizer_config.get("identifier")
+    if isinstance(tokenizer_identifier, str) and tokenizer_identifier.endswith(".json"):
+        # Tokenizer files may be recorded as absolute paths from another machine or as
+        # paths relative to the repository root.
+        tokenizer_path = Path(tokenizer_identifier)
+        candidates = [
+            tokenizer_path,
+            PROJECT_ROOT / tokenizer_path,
+            OLMO_CORE_SRC / "olmo_core" / "data" / "tokenizers" / tokenizer_path.name,
+        ]
+        resolved = next((path for path in candidates if path.exists()), None)
+        if resolved is not None:
+            tokenizer_config["identifier"] = str(resolved.resolve())
+
+    block_config = config.get("model", {}).get("block", {})
+    if block_config.get("name") not in {"moda", "post_norm_moda"}:
+        # Older Pre-LN checkpoints may carry the (unused) MoDA-only key.
+        block_config.pop("moda_skip_ffn_kv", None)
+    sequence_mixer = block_config.get("sequence_mixer", {})
+    if sequence_mixer.get("backend") == "flash_2":
+        sequence_mixer["backend"] = "torch"
+    # AttnRes checkpoints used to be stored as `default` (or `attn_res`) + attnres_block_size.
+    if block_config.get("name") == "attn_res":
+        block_config["name"] = "attnres"
+    if block_config.get("name") == "default" and block_config.get("attnres_block_size") is not None:
+        block_config["name"] = "attnres"
+    return config
+
+
 def looks_like_olmo_checkpoint(path: Path) -> bool:
     config_path = path / "config.json"
     if not config_path.exists():
@@ -99,14 +138,115 @@ def looks_like_olmo_checkpoint(path: Path) -> bool:
     return isinstance(config, dict) and "model" in config and "dataset" in config
 
 
-def _resolve_checkpoint_dir(model_path: str) -> Path:
+def resolve_checkpoint_dir(model_path: str) -> Path:
+    """Accept a checkpoint dir, or a run dir whose latest `step*` subdirectory is used."""
     checkpoint_dir = Path(model_path).expanduser().resolve()
-    if not looks_like_olmo_checkpoint(checkpoint_dir):
+    if looks_like_olmo_checkpoint(checkpoint_dir):
+        return checkpoint_dir
+
+    step_dirs = []
+    for child in checkpoint_dir.glob("step*"):
+        try:
+            step = int(child.name.removeprefix("step"))
+        except ValueError:
+            continue
+        if child.is_dir() and looks_like_olmo_checkpoint(child):
+            step_dirs.append((step, child))
+    if not step_dirs:
         raise ValueError(
             f"Unsupported model path: {checkpoint_dir}. Expected an OLMo-core checkpoint directory "
-            "containing config.json with 'model' and 'dataset' entries."
+            "containing config.json with 'model' and 'dataset' entries, or a run directory with step* checkpoints."
         )
-    return checkpoint_dir
+    return max(step_dirs)[1]
+
+
+def load_experiment_config(model_path: str) -> tuple[Path, dict]:
+    checkpoint_dir = resolve_checkpoint_dir(model_path)
+    return checkpoint_dir, normalize_experiment_config(_load_json(checkpoint_dir / "config.json"))
+
+
+def _torch_fused_attnres(
+    query: torch.Tensor,
+    residuals,
+    rms_weight: torch.Tensor,
+    output_rms_weight: torch.Tensor | None = None,
+    rms_eps: float = 1e-6,
+    scale: float = 1.0,
+    return_weights: bool = False,
+):
+    """PyTorch implementation of `olmo_core.kernels.attnres.fused_attnres`."""
+    if len(residuals) == 0:
+        raise ValueError("residuals must contain at least one source")
+    query_vector = query.reshape(-1).float()
+    sources = torch.stack([residual.float() for residual in residuals], dim=0)
+    normalized = sources * torch.rsqrt(sources.square().mean(dim=-1, keepdim=True) + rms_eps)
+    scores = (normalized * rms_weight.float() * query_vector).sum(dim=-1) * scale
+    probs = torch.softmax(scores, dim=0)
+    mixed = (probs.unsqueeze(-1) * sources).sum(dim=0)
+    if output_rms_weight is not None:
+        mixed = mixed * torch.rsqrt(mixed.square().mean(dim=-1, keepdim=True) + rms_eps)
+        mixed = mixed * output_rms_weight.float()
+    mixed = mixed.to(residuals[0].dtype)
+    if return_weights:
+        return mixed, probs
+    return mixed
+
+
+def _install_attnres_fallback(force: bool) -> None:
+    try:
+        import olmo_core.kernels.attnres as attnres_kernel
+    except Exception:
+        # The Triton kernel lives in `fla`; analysis only needs a functional implementation.
+        attnres_kernel = types.ModuleType("olmo_core.kernels.attnres")
+        sys.modules["olmo_core.kernels.attnres"] = attnres_kernel
+        force = True
+    if force:
+        attnres_kernel.fused_attnres = _torch_fused_attnres
+
+
+def _install_liger_mhc_fallback() -> None:
+    """Replace the Liger mHC kernels with the equivalent PyTorch forward (no Triton needed)."""
+    from olmo_core.nn import hyper_connections as hc
+
+    liger_cls = getattr(hc, "LigerHyperConnection", None)
+    if liger_cls is None or getattr(liger_cls, "_depthbench_torch_forward", False):
+        return
+
+    def forward(self, residuals: torch.Tensor, *args, **kwargs):
+        from torch.utils._pytree import tree_flatten, tree_unflatten
+
+        streams = hc._reshape_to_streams(residuals, self.num_residual_streams).float()
+        normed = hc._rms_norm(streams.reshape(*streams.shape[:-2], -1), eps=self.rms_eps)
+        mix = torch.matmul(normed, self.phi.float()) + self.b.float()
+        n = self.num_residual_streams
+        h_pre = torch.sigmoid(self.alpha_pre.float() * mix[..., :n] + self.pre_eps)
+        h_post = self.post_mult * torch.sigmoid(self.alpha_post.float() * mix[..., n : 2 * n])
+        h_res_logits = mix[..., 2 * n : 2 * n + n * n].reshape(*mix.shape[:-1], n, n)
+        h_res = hc.sinkhorn_log(self.alpha_res.float() * h_res_logits, num_iters=self.tmax, tau=1.0)
+
+        branch_input = torch.einsum("...s,...sd->...d", h_pre, streams).to(residuals.dtype)
+        branch_input = branch_input.to(self._branch_param_dtype(branch_input.dtype))
+        branch_output = self.branch(branch_input, *args, **kwargs) if self.branch is not None else branch_input
+        (branch_output, *rest), tree_spec = tree_flatten(branch_output)
+        mixed = torch.einsum("...ts,...sd->...td", h_res, streams)
+        output = mixed + branch_output.float().unsqueeze(-2) * h_post.unsqueeze(-1)
+        output = self.dropout(hc._flatten_from_streams(output).to(dtype=residuals.dtype))
+        return tree_unflatten((output, *rest), tree_spec)
+
+    liger_cls.forward = forward
+    liger_cls._depthbench_torch_forward = True
+
+
+def install_runtime_fallbacks(device: str) -> None:
+    """Use PyTorch implementations of Triton-only kernels where needed.
+
+    On CPU both AttnRes and Liger mHC fall back to PyTorch. On GPU the fused kernels are
+    used unless DEPTHBENCH_USE_LIGER_MHC_FALLBACK=1 requests the PyTorch mHC forward.
+    """
+    on_cpu = get_device_type(device) == "cpu"
+    _install_attnres_fallback(force=on_cpu)
+    if on_cpu or os.environ.get("DEPTHBENCH_USE_LIGER_MHC_FALLBACK") == "1":
+        _install_liger_mhc_fallback()
 
 
 def load_model_and_tokenizer(
@@ -117,9 +257,9 @@ def load_model_and_tokenizer(
     max_sequence_length: int | None,
 ):
     resolved_device = resolve_device(device)
+    install_runtime_fallbacks(resolved_device)
     load_dtype = resolve_load_dtype(dtype, resolved_device)
-    checkpoint_dir = _resolve_checkpoint_dir(model_path)
-    experiment_config = _load_json(checkpoint_dir / "config.json")
+    checkpoint_dir, experiment_config = load_experiment_config(model_path)
 
     model_config = TransformerConfig.from_dict(experiment_config["model"])
     tokenizer_config = TokenizerConfig.from_dict(experiment_config["dataset"]["tokenizer"])
@@ -242,6 +382,73 @@ def build_sample_batch(
     return {"input_ids": input_ids, "attention_mask": attention_mask}
 
 
+def sample_token_windows(paths: Sequence[Path], num_samples: int, seq_length: int, seed: int) -> torch.Tensor:
+    """Sample random contiguous windows from pre-tokenized `.npy` shards (raw uint16 memmaps accepted)."""
+    arrays = []
+    for path in paths:
+        try:
+            arrays.append(np.load(path, mmap_mode="r").reshape(-1))
+        except ValueError:
+            arrays.append(np.memmap(path, mode="r", dtype=np.uint16).reshape(-1))
+
+    usable = np.asarray([max(0, len(arr) - seq_length) for arr in arrays], dtype=np.float64)
+    if usable.sum() <= 0:
+        raise ValueError(f"Token data files are too short for seq_length={seq_length}")
+
+    rng = np.random.default_rng(seed)
+    file_ids = rng.choice(len(arrays), size=num_samples, p=usable / usable.sum())
+    samples = []
+    for file_id in file_ids:
+        arr = arrays[int(file_id)]
+        start = int(rng.integers(0, len(arr) - seq_length))
+        samples.append(np.asarray(arr[start : start + seq_length], dtype=np.int64))
+    return torch.from_numpy(np.stack(samples))
+
+
+def add_model_args(parser: argparse.ArgumentParser, *, num_samples: int, seq_length: int) -> None:
+    parser.add_argument("--model_path", type=str, required=True, help="OLMo-core checkpoint or run dir")
+    parser.add_argument("--output_dir", type=str, required=True, help="Directory to save results")
+    parser.add_argument("--num_samples", type=int, default=num_samples, help="Number of token windows")
+    parser.add_argument("--seq_length", type=int, default=seq_length, help="Token window length")
+    parser.add_argument("--micro_batch_size", type=int, default=4, help="Sequences per forward pass")
+    parser.add_argument("--device", type=str, default="auto", help="auto/cpu/cuda/cuda:0")
+    parser.add_argument("--dtype", type=str, default="auto", choices=["auto", "float32", "float16", "bfloat16"])
+    parser.add_argument("--token-data-glob", type=str, default=None, help="Glob of pre-tokenized .npy shards")
+    parser.add_argument("--text-file", type=str, default=None, help="UTF-8 text file used when no token data is given")
+    parser.add_argument("--prompt", action="append", default=None, help="Prompt text; can be repeated")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for sampling")
+    parser.add_argument("--tokenizer-id", type=str, default=None, help="Optional tokenizer override")
+    parser.add_argument("--max-sequence-length", type=int, default=None, help="Tokenizer model_max_length override")
+
+
+def load_eval_input_ids(args: argparse.Namespace, tokenizer) -> tuple[torch.Tensor, dict]:
+    """Build the evaluation token batch from `--token-data-glob`, `--text-file` or `--prompt`."""
+    if args.token_data_glob:
+        paths = [Path(path) for path in sorted(glob.glob(args.token_data_glob))]
+        if not paths:
+            raise ValueError(f"No token data files matched --token-data-glob={args.token_data_glob}")
+        input_ids = sample_token_windows(paths, args.num_samples, args.seq_length, args.seed)
+        source = {"sample_source": "token-data-glob", "token_data_glob": args.token_data_glob}
+    else:
+        batch = build_sample_batch(
+            tokenizer=tokenizer,
+            num_samples=args.num_samples,
+            seq_length=args.seq_length,
+            seed=args.seed,
+            text_file=args.text_file,
+            prompts=args.prompt,
+        )
+        input_ids = batch["input_ids"]
+        source = {"sample_source": "text-or-prompts", "text_file": args.text_file}
+    source.update(num_samples=args.num_samples, seq_length=args.seq_length, seed=args.seed)
+    return input_ids, source
+
+
+def iter_micro_batches(input_ids: torch.Tensor, micro_batch_size: int, device: str) -> Iterator[torch.Tensor]:
+    for start in range(0, input_ids.shape[0], micro_batch_size):
+        yield input_ids[start : start + micro_batch_size].to(device)
+
+
 def _capture_hidden_states(model):
     layers = get_decoder_layers(model)
     hidden_states: list[torch.Tensor | None] = [None] * (len(layers) + 1)
@@ -354,4 +561,12 @@ def json_ready(value):
         return [json_ready(v) for v in value]
     if isinstance(value, Path):
         return str(value)
+    if isinstance(value, (np.floating, np.integer)):
+        return value.item()
     return value
+
+
+def write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(json_ready(payload), f, indent=2)
