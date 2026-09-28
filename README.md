@@ -11,11 +11,10 @@
 </div>
 
 <p>
-  🧱 DepthBench is a controlled testbed for studying <b>how Transformer language models use depth</b>.
-  It trains eleven residual-connection and normalization architectures (Pre-LN, Peri-LN, LNS,
-  DeepNorm, KEEL, depth-μP, CompleteP, HC, mHC, MoDA and AttnRes) under the same data, token budget and
-  model shapes, sweeps depth at fixed parameter count, and ships a set of architecture-aware probes
-  (angular distance, causal score, permutation score, logit lens, layer pruning, Jacobians) that run
+  🧱 DepthBench is a controlled testbed for <b>measuring how residual connections enable more computational depth</b>.
+  It trains a broad range of residual-connection and normalization architectures (Pre-LN, Peri-LN, LNS,
+  DeepNorm, KEEL, depth-μP, CompleteP, HC, mHC, MoDA and AttnRes), sweeps aspect ratios (width / depth) under the same data, token budget and fixed parameter count, and ships a set of architecture-aware probes
+  (angular distance, causal score, permutation score, logit lens, layer pruning) that run
   directly on native OLMo-core checkpoints.
 </p>
 
