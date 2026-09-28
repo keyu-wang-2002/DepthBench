@@ -344,8 +344,8 @@ If you find DepthBench useful, please cite:
 
 ```bibtex
 @misc{depthbench2026,
-  title  = {DepthBench},
-  author = {TODO},
+  title  = {{DepthBench}: Measuring How Residual Connections Enable More Computational Depth},
+  author = {Wang, Keyu and Huang, Yangyi and Kang, Jiale and Gonz{\'a}lez-Mart{\'\i}nez, David and Liu, Weiyang and Liu, Shiwei},
   year   = {2026},
   note   = {TODO: arXiv link},
   url    = {https://github.com/keyu-wang-2002/DepthBench}
