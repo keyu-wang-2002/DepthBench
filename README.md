@@ -22,6 +22,13 @@
   directly on native OLMo-core checkpoints.
 </p>
 
+<p align="center">
+  <img src="assets/teaser.png" alt="Validation loss vs. aspect ratio for seven architectures at 400M" width="70%">
+  <br>
+  <em>Validation loss across aspect ratios at a fixed ~400M parameter budget and shared pre-training recipe.
+  Pre-LN gets worse as models become deeper and narrower, while HC and Full AttnRes keep improving.</em>
+</p>
+
 --------
 
 * [News](#news)
@@ -334,7 +341,7 @@ DepthBench/
 ├── config_utils/       # JSON config → OLMo-core model/tokenizer config
 ├── environment/        # pinned CUDA 12.8 environment, installer, MoDA kernel patch
 ├── docs/               # implementation notes for HC/mHC and MoDA
-├── assets/             # logo
+├── assets/             # logo, banner and teaser figure
 └── pretrain/OLMo-core/ # modified OLMo-core with all DepthBench block types
 ```
 
