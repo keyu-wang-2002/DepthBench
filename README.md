@@ -11,11 +11,10 @@
 </div>
 
 <p>
-  🧱 DepthBench is a controlled testbed for studying <b>how Transformer language models use depth</b>.
-  It trains eleven residual-connection and normalization architectures (Pre-LN, Peri-LN, LNS,
-  DeepNorm, KEEL, depth-μP, CompleteP, HC, mHC, MoDA and AttnRes) under the same data, token budget and
-  model shapes, sweeps depth at fixed parameter count, and ships a set of architecture-aware probes
-  (angular distance, causal score, permutation score, logit lens, layer pruning, Jacobians) that run
+  🧱 DepthBench is a controlled testbed for <b>measuring how residual connections enable more computational depth</b>.
+  It trains a broad range of residual-connection and normalization architectures (Pre-LN, Peri-LN, LNS,
+  DeepNorm, KEEL, depth-μP, CompleteP, HC, mHC, MoDA and AttnRes), sweeps aspect ratios (width / depth) under the same data, token budget and fixed parameter count, and ships a set of architecture-aware probes
+  (angular distance, causal score, permutation score, logit lens, layer pruning) that run
   directly on native OLMo-core checkpoints.
 </p>
 
@@ -80,22 +79,23 @@ They cover most architectures above at several depths, plus learning-rate sweeps
 | Block AttnRes | 400M (L16–L32), 500M (L34) |
 
 Depth-sweep repositories are named `<arch>-lr<lr>-llama-<size>-L<layers>-pretrain`, for example
-[`hc-lr2e-3-llama-400M-L24-pretrain`](https://huggingface.co/aspect-ratio-scaling/hc-lr2e-3-llama-400M-L24-pretrain).
-Each repository is a **raw OLMo-core distributed checkpoint**, not a `transformers` export. It holds the
-initial and final step directories (`step0/`, `step<N>/`, each with its `config.json`) and the tokenizer.
-Every analysis and evaluation script in this repository loads them directly:
+[`preln-lr2e-3-llama-400M-L24-pretrain`](https://huggingface.co/aspect-ratio-scaling/preln-lr2e-3-llama-400M-L24-pretrain).
+Each repository is a **raw OLMo-core distributed checkpoint**, not a `transformers` export. Most hold
+`step*/` directories (initial, intermediate and final steps, each with its `config.json`) plus the
+tokenizer; others store the final checkpoint (`config.json` + `model_and_optim/`) directly at the repository
+root. Every analysis and evaluation script in this repository loads either layout directly:
 
 ```bash
-huggingface-cli download aspect-ratio-scaling/hc-lr2e-3-llama-400M-L24-pretrain \
-  --local-dir ckpt/hf/hc-400M-L24
+huggingface-cli download aspect-ratio-scaling/preln-lr2e-3-llama-400M-L24-pretrain \
+  --local-dir ckpt/hf/preln-400M-L24
 
 # a run directory resolves to its latest step
-python analysis/compute_angular_distance.py --model_path ckpt/hf/hc-400M-L24 \
+python analysis/compute_angular_distance.py --model_path ckpt/hf/preln-400M-L24 \
   --output_dir results/angular --token-data-glob "data/fineweb-edu/pre-tokenize/eval/*.npy"
-python eval/run_zero_shot.py ckpt/hf/hc-400M-L24/step7600 --device cuda:0 --batch-size 32
+python eval/run_zero_shot.py ckpt/hf/preln-400M-L24/step7600 --device cuda:0 --batch-size 32
 ```
 
-Add `--include "step7600/*" "tokenizer/*"` to skip the step-0 checkpoint.
+For step-directory repositories, add `--include "step7600/*" "tokenizer/*"` to download only the final step.
 
 ## Installation
 
