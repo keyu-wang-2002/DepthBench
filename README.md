@@ -34,9 +34,7 @@
   * [Launching a Run](#launching-a-run)
   * [Layer Statistics](#layer-statistics)
 * [Depth Analysis](#depth-analysis)
-  * [Calibration Data](#calibration-data)
   * [Depth Metrics](#depth-metrics)
-  * [Other Analyses](#other-analyses)
 * [Evaluation](#evaluation)
 * [Repository Structure](#repository-structure)
 * [Citation](#citation)
@@ -257,23 +255,6 @@ gradient (`backward`): `mean`, `variance`, `magnitude` (= `abs().mean()`) and `n
 All analysis scripts in [`analysis/`](analysis) load **native OLMo-core checkpoints**, so no Hugging Face
 conversion is needed. They detect the architecture automatically.
 
-### Calibration Data
-
-The Jacobian and usefulness analyses read a text calibration set mixed from FineWeb-Edu, C4 and Dolma:
-
-```bash
-python data_utils/build_calibration_data.py \
-  --source fineweb_local --source c4 --source dolma \
-  --output-dir data/calibration --output-prefix calibration \
-  --tokenizer-name-or-path pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json \
-  --target-total-tokens 262144 \
-  --sample-length-mode fixed --sample-length 512 \
-  --shuffle-samples
-```
-
-This writes `data/calibration/calibration.{txt,jsonl,summary.json}`. Use `--sample-length-mode uniform` with
-`--min-sample-length` / `--max-sample-length` for variable-length windows.
-
 ### Depth Metrics
 
 Each metric is defined over *depth states* `z_0, ..., z_L` (`z_0` is the embedding output) and two
@@ -320,18 +301,6 @@ python analysis/compute_layer_pruning.py --model_path $CKPT --output_dir results
 
 `--micro_batch_size` trades memory for speed. On CPU, the Triton kernels (AttnRes, Liger mHC) fall back to
 PyTorch automatically. On GPU, set `DEPTHBENCH_USE_LIGER_MHC_FALLBACK=1` to force the PyTorch mHC path.
-
-### Other Analyses
-
-```bash
-# Input–output Jacobian of each block
-python analysis/compute_jacobian.py --model_path $CKPT --output_dir results/jacobian \
-  --text-file data/calibration/calibration.txt --num_samples 128 --seq_length 512
-
-# Per-layer usefulness score
-python analysis/compute_usefulness_score.py --model_path $CKPT --output_dir results/usefulness \
-  --text-file data/calibration/calibration.txt --num_samples 1024 --seq_length 512
-```
 
 ## Evaluation
 
