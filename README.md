@@ -1,6 +1,10 @@
 <div align="center">
 
-<h1><img src="assets/logo.svg" alt="DepthBench logo" height="32" align="center">&nbsp;DepthBench</h1>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
+  <img src="assets/banner.svg" alt="DepthBench" height="60">
+</picture>
+<br>
 
 [![arXiv](https://img.shields.io/badge/arXiv-coming_soon-b31b1b.svg?style=flat-square)](#citation)
 [![hf_model](https://img.shields.io/badge/-Checkpoints-gray.svg?logo=huggingface&style=flat-square)](https://huggingface.co/aspect-ratio-scaling)
@@ -41,7 +45,7 @@
 ## News
 
 - [2026-09] 🚀 Initial public release of DepthBench: 11 depth architectures, 25 model shapes from 200M to 1.6B, and native-checkpoint depth analysis.
-- [2026-09] 🤗 130+ pre-trained checkpoints are available on the Hugging Face Hub at [aspect-ratio-scaling](https://huggingface.co/aspect-ratio-scaling).
+- [2026-09] 🤗 160+ pre-trained checkpoints are available on the Hugging Face Hub at [aspect-ratio-scaling](https://huggingface.co/aspect-ratio-scaling).
 
 ## Models
 
@@ -66,20 +70,23 @@ Block implementations live in [`olmo_core/nn/transformer/block.py`](pretrain/OLM
 
 ## Checkpoints
 
-We release 130+ pre-trained checkpoints on the Hugging Face Hub under
+We release 160+ pre-trained checkpoints on the Hugging Face Hub under
 [🤗 aspect-ratio-scaling](https://huggingface.co/aspect-ratio-scaling).
-They cover most architectures above at several depths, plus learning-rate sweeps (Pre-LN, LNS, AttnRes) at the 400M base shape.
+They cover most architectures above at a broad range of width-depth aspect ratios.
 
-| Architecture | Tiers × depths |
-|---|---|
-| Pre-LN | 400M (L16–L32), 1.6B (L28, L40, L54) |
-| Peri-LN / LNS / DeepNorm / KEEL / MoDA (pre-norm) | 400M (L16–L32) |
-| HC / mHC | 200M, 300M, 500M ladders; 400M (L16–L70); 300M fixed backbone; HC also at 1.6B |
-| Full AttnRes | 400M (L16–L70), 1.6B (L28, L40) |
-| Block AttnRes | 400M (L16–L32), 500M (L34) |
+| Tier | Shapes (depth-width) | Architectures |
+|---|---|---|
+| 400M | L16-d1216 · L20-d1120 · L24-d1024 · L28-d960 · L32-d896 | all |
+| 400M deep | L36-d864 · L42-d800 · L70-d640 | HC, mHC, Full AttnRes |
+| 1.6B | L28-d2048 · L40-d1728 · L54-d1504 | Pre-LN, HC, Full AttnRes |
+| 300M backbone | L16-d1248 · L42-d768 · L56-d672 · L70-d608 | HC, mHC |
+| 200M | L12-d896 · L18-d768 · L24-d672 | Pre-LN, HC, mHC, Full / Block AttnRes |
+| 300M | L14-d1056 · L21-d896 · L28-d800 | Pre-LN, HC, mHC, Full / Block AttnRes |
+| 500M | L17-d1344 · L26-d1120 · L34-d992 | Pre-LN, HC, mHC, Full / Block AttnRes |
 
-Depth-sweep repositories are named `<arch>-lr<lr>-llama-<size>-L<layers>-pretrain`, for example
-[`preln-lr2e-3-llama-400M-L24-pretrain`](https://huggingface.co/aspect-ratio-scaling/preln-lr2e-3-llama-400M-L24-pretrain).
+Repositories are named `<arch>-lr<lr>-llama-<size>-L<layers>-pretrain`, e.g.
+[`preln-lr2e-3-llama-400M-L24-pretrain`](https://huggingface.co/aspect-ratio-scaling/preln-lr2e-3-llama-400M-L24-pretrain)
+(Pre-LN uses `base` at 200M / 300M / 500M).
 Each repository is a **raw OLMo-core distributed checkpoint**, not a `transformers` export. Most hold
 `step*/` directories (initial, intermediate and final steps, each with its `config.json`) plus the
 tokenizer; others store the final checkpoint (`config.json` + `model_and_optim/`) directly at the repository
@@ -96,10 +103,12 @@ python eval/run_zero_shot.py ckpt/hf/preln-400M-L24/step7600 --device cuda:0 --b
 ```
 
 For step-directory repositories, add `--include "step7600/*" "tokenizer/*"` to download only the final step.
+`step7600` is the final step at 400M; the other tiers end at `step3800` (200M), `step5700` (300M),
+`step9500` (500M) and `step30400` (1.6B).
 
 ## Installation
 
-DepthBench targets Linux x86_64 with NVIDIA GPUs (experiments were run on H100). The reference environment
+DepthBench targets Linux x86_64 with NVIDIA GPUs (experiments were run on B200/H100/A100). The reference environment
 is Python 3.10, PyTorch 2.8.0 + CUDA 12.8, Triton 3.4 and Liger Kernel 0.8. It uses a **modified OLMo-core**,
 vendored in [`pretrain/OLMo-core`](pretrain/OLMo-core). Do not install `ai2-olmo-core` from PyPI.
 
