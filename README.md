@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/teaser.png" alt="Validation loss vs. aspect ratio for seven architectures at 400M" width="70%">
+  <img src="assets/teaser.png" alt="Validation loss vs. aspect ratio for seven architectures at 400M" width="85%">
   <br>
   <em>Validation loss across aspect ratios at a fixed ~400M parameter budget and shared pre-training recipe.
   Pre-LN gets worse as models become deeper and narrower, while HC and Full AttnRes keep improving.</em>
