@@ -77,4 +77,5 @@ torchrun \
     --eval-interval="${EVAL_INTERVAL}" \
     --save-interval="${SAVE_INTERVAL}" \
     --save-folder="${SAVE_ROOT}/${RUN_NAME}" \
+    --train_module.compile_model=true \
     --wandb-project="${WANDB_PROJECT:-}"

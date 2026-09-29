@@ -8,7 +8,8 @@ torchrun --nproc_per_node=4 --master_port=35100 --master_addr=localhost "example
     --seed=42 --max-steps=7600 --global-train-batch-size=512 \
     --device-train-microbatch-size=8 --learning-rate=2e-3 --warmup-steps=760 \
     --eval-interval=7600 --save-interval=3000 \
-    --save-folder="ckpt/depthbench/pretrain-hc-400M-lr2e-3"
+    --save-folder="ckpt/depthbench/pretrain-hc-400M-lr2e-3" \
+    --train_module.compile_model=true
 
 # Manifold-constrained Hyper-Connections (fused Liger, residual logits 0/-8)
 torchrun --nproc_per_node=4 --master_port=35101 --master_addr=localhost "examples/pretrain_mhc.py" \
@@ -19,7 +20,8 @@ torchrun --nproc_per_node=4 --master_port=35101 --master_addr=localhost "example
     --seed=42 --max-steps=7600 --global-train-batch-size=512 \
     --device-train-microbatch-size=8 --learning-rate=2e-3 --warmup-steps=760 \
     --eval-interval=7600 --save-interval=3000 \
-    --save-folder="ckpt/depthbench/pretrain-mhc-400M-lr2e-3-gap8"
+    --save-folder="ckpt/depthbench/pretrain-mhc-400M-lr2e-3-gap8" \
+    --train_module.compile_model=true
 
 # Pre-norm MoDA
 torchrun --nproc_per_node=8 --master_port=35200 --master_addr=localhost "examples/pretrain_moda.py" \
@@ -29,7 +31,8 @@ torchrun --nproc_per_node=8 --master_port=35200 --master_addr=localhost "example
     --seed=42 --max-steps=7600 --global-train-batch-size=512 \
     --device-train-microbatch-size=4 --learning-rate=2e-3 --warmup-steps=760 \
     --eval-interval=7600 --save-interval=3000 \
-    --save-folder="ckpt/depthbench/pretrain-prenorm-moda-400M-lr2e-3"
+    --save-folder="ckpt/depthbench/pretrain-prenorm-moda-400M-lr2e-3" \
+    --train_module.compile_model=true
 
 # Post-norm baseline and paper-aligned post-norm MoDA use the same common arguments.
 torchrun --nproc_per_node=8 --master_port=35201 --master_addr=localhost "examples/pretrain_postnorm.py" \
@@ -39,7 +42,8 @@ torchrun --nproc_per_node=8 --master_port=35201 --master_addr=localhost "example
     --seed=42 --max-steps=7600 --global-train-batch-size=512 \
     --device-train-microbatch-size=16 --learning-rate=2e-3 --warmup-steps=760 \
     --eval-interval=7600 --save-interval=3000 \
-    --save-folder="ckpt/depthbench/pretrain-postnorm-400M-lr2e-3"
+    --save-folder="ckpt/depthbench/pretrain-postnorm-400M-lr2e-3" \
+    --train_module.compile_model=true
 
 torchrun --nproc_per_node=8 --master_port=35202 --master_addr=localhost "examples/pretrain_postnorm_moda.py" \
     --run_name=pretrain-postnorm-moda-400M-lr2e-3 \
@@ -48,7 +52,8 @@ torchrun --nproc_per_node=8 --master_port=35202 --master_addr=localhost "example
     --seed=42 --max-steps=7600 --global-train-batch-size=512 \
     --device-train-microbatch-size=4 --learning-rate=2e-3 --warmup-steps=760 \
     --eval-interval=7600 --save-interval=3000 \
-    --save-folder="ckpt/depthbench/pretrain-postnorm-moda-400M-lr2e-3"
+    --save-folder="ckpt/depthbench/pretrain-postnorm-moda-400M-lr2e-3" \
+    --train_module.compile_model=true
 
 # Pre-LN
 torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "examples/pretrain_preln.py" \
@@ -64,6 +69,7 @@ torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "example
     --eval-interval=200 \
     --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-preln-400M-lr2e-3" \
+    --train_module.compile_model=true \
     --enable-layer-stats \
     --layer-stats-interval 1
 
@@ -86,6 +92,7 @@ torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "example
     --eval-interval=200 \
     --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-preln-depth-muP-depth-only-400M-lr2e-3" \
+    --train_module.compile_model=true \
     --enable-layer-stats \
     --layer-stats-interval 1
 
@@ -108,6 +115,7 @@ torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "example
     --eval-interval=200 \
     --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-preln-depth-muP-depth-width-400M-lr2e-3" \
+    --train_module.compile_model=true \
     --enable-layer-stats \
     --layer-stats-interval 1
 
@@ -130,6 +138,7 @@ torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "example
     --eval-interval=200 \
     --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-preln-completeP-depth-only-400M-lr2e-3" \
+    --train_module.compile_model=true \
     --enable-layer-stats \
     --layer-stats-interval 1
 
@@ -152,6 +161,7 @@ torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "example
     --eval-interval=200 \
     --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-preln-completeP-depth-width-400M-lr2e-3" \
+    --train_module.compile_model=true \
     --enable-layer-stats \
     --layer-stats-interval 1
 
@@ -170,6 +180,7 @@ torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "example
     --eval-interval=200 \
     --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-periln-400M-lr2e-3" \
+    --train_module.compile_model=true \
     --enable-layer-stats \
     --layer-stats-interval 1
 
@@ -188,6 +199,7 @@ torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "example
     --eval-interval=200 \
     --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-lns-400M-lr1e-2" \
+    --train_module.compile_model=true \
     --enable-layer-stats \
     --layer-stats-interval 1
 
@@ -206,6 +218,7 @@ torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "example
     --eval-interval=200 \
     --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-deepnorm-400M-lr2e-3" \
+    --train_module.compile_model=true \
     --enable-layer-stats \
     --layer-stats-interval 1
 
@@ -224,6 +237,7 @@ torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "example
     --eval-interval=200 \
     --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-keel-400M-lr2e-3" \
+    --train_module.compile_model=true \
     --enable-layer-stats \
     --layer-stats-interval 1
 
@@ -242,6 +256,7 @@ torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "example
     --eval-interval=200 \
     --save-interval=3000 \
     --save-folder="ckpt/depthbench/pretrain-attnres-400M-lr2e-3" \
+    --train_module.compile_model=true \
     --enable-layer-stats \
     --layer-stats-interval 1 \
     model.block.attnres_block_size=1

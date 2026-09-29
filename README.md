@@ -6,7 +6,7 @@
 </picture>
 <br>
 
-[![arXiv](https://img.shields.io/badge/arXiv-coming_soon-b31b1b.svg?style=flat-square)](#citation)
+[![arXiv](https://img.shields.io/badge/arXiv-2609.32534-b31b1b.svg?style=flat-square)](https://arxiv.org/abs/2609.32534)
 [![hf_model](https://img.shields.io/badge/-Checkpoints-gray.svg?logo=huggingface&style=flat-square)](https://huggingface.co/aspect-ratio-scaling)
 [![Built on OLMo-core](https://img.shields.io/badge/built_on-OLMo--core-f0529c.svg?style=flat-square)](https://github.com/allenai/OLMo-core)
 [![Python 3.10](https://img.shields.io/badge/python-3.10-3776ab.svg?logo=python&logoColor=white&style=flat-square)](environment/README.md)
@@ -189,16 +189,25 @@ See [`configs/README.md`](configs/README.md) for every shape, including paramete
 
 ### Launching a Run
 
-Every entrypoint takes the same arguments. A minimal 400M Pre-LN run on 8 GPUs:
+Every entrypoint takes the same arguments. A 400M Pre-LN run on 8 GPUs, from the repository root:
 
 ```bash
-torchrun --nproc_per_node=8 examples/pretrain_preln.py \
-  --run_name=pretrain-preln-400M-lr2e-3 \
-  --model-config=configs/llama_400m_L24.json \
-  --max-steps=7600 --warmup-steps=760 \
-  --global-train-batch-size=512 --device-train-microbatch-size=16 \
-  --learning-rate=2e-3 \
-  --save-folder=ckpt/depthbench/pretrain-preln-400M-lr2e-3
+torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "examples/pretrain_preln.py" \
+    --run_name=pretrain-preln-400M-lr2e-3 \
+    --model-config="configs/llama_400m_L24.json" \
+    --tokenizer-name-or-path="pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
+    --seed=42 \
+    --max-steps=7600 \
+    --global-train-batch-size=512 \
+    --device-train-microbatch-size=16 \
+    --learning-rate=2e-3 \
+    --warmup-steps=760 \
+    --eval-interval=200 \
+    --save-interval=3000 \
+    --save-folder="ckpt/depthbench/pretrain-preln-400M-lr2e-3" \
+    --train_module.compile_model=true \
+    --enable-layer-stats \
+    --layer-stats-interval 1
 ```
 
 To train a different architecture, swap the entrypoint (see [Models](#models)).
@@ -236,6 +245,7 @@ Any other field of the OLMo-core experiment config can be overridden with traili
 | `--eval-interval` / `--save-interval` | `200` / `10000` | In steps |
 | `--save-folder` | – | Checkpoint directory |
 | `--load-path` / `--load-trainer-state` | – | Resume or initialize from a checkpoint |
+| `--train_module.compile_model` | `false` | Wrap the model in `torch.compile` |
 | `--wandb-project` / `--wandb-entity` | `depthbench` / none | Set `--wandb-project ""` to disable W&B |
 
 </details>
@@ -351,11 +361,12 @@ If you find DepthBench useful, please cite:
 
 ```bibtex
 @misc{depthbench2026,
-  title  = {{DepthBench}: Measuring How Residual Connections Enable More Computational Depth},
-  author = {Wang, Keyu and Huang, Yangyi and Kang, Jiale and Gonz{\'a}lez-Mart{\'\i}nez, David and Liu, Weiyang and Liu, Shiwei},
-  year   = {2026},
-  note   = {TODO: arXiv link},
-  url    = {https://github.com/keyu-wang-2002/DepthBench}
+  title         = {{DepthBench}: Measuring How Residual Connections Enable More Computational Depth},
+  author        = {Wang, Keyu and Huang, Yangyi and Kang, Jiale and Gonz{\'a}lez-Mart{\'\i}nez, David and Liu, Weiyang and Liu, Shiwei},
+  year          = {2026},
+  eprint        = {2609.32534},
+  archivePrefix = {arXiv},
+  url           = {https://arxiv.org/abs/2609.32534}
 }
 ```
 
