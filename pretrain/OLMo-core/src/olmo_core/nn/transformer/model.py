@@ -654,7 +654,7 @@ class Transformer(nn.Module):
                     f"block_{block_idx:02d}", h_for_stats
                 )
                 if isinstance(h, tuple):
-                    h = (observed_h, h[1], h[2])
+                    h = (observed_h, *h[1:])
                 else:
                     h = observed_h
 

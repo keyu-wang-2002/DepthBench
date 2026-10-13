@@ -21,6 +21,7 @@ from .block import (
     ReorderedNormTransformerBlock,
     TransformerBlock,
     TransformerBlockBase,
+    ValueResidualTransformerBlock,
 )
 from .config import (
     HyperConnectionsConfig,
@@ -59,6 +60,7 @@ __all__ = [
     "PostNormMoDATransformerBlock",
     "MoDAConfig",
     "AttnResTransformerBlock",
+    "ValueResidualTransformerBlock",
     "DeepNormTransformerBlock",
     "DepthScaledTransformerBlock",
     "KeelTransformerBlock",

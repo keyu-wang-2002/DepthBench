@@ -260,3 +260,22 @@ torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "example
     --enable-layer-stats \
     --layer-stats-interval 1 \
     model.block.attnres_block_size=1
+
+
+# Value residual (RWKV-7, LoRA mixing gate)
+torchrun --nproc_per_node=8 --master_port=35100 --master_addr=localhost "examples/pretrain_value_residual.py" \
+    --run_name=pretrain-value-residual-400M-lr2e-3 \
+    --model-config="configs/llama_400m_L24.json" \
+    --tokenizer-name-or-path="pretrain/OLMo-core/src/olmo_core/data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json" \
+    --seed=42 \
+    --max-steps=7600 \
+    --global-train-batch-size=512 \
+    --device-train-microbatch-size=16 \
+    --learning-rate=2e-3 \
+    --warmup-steps=760 \
+    --eval-interval=200 \
+    --save-interval=3000 \
+    --save-folder="ckpt/depthbench/pretrain-value-residual-400M-lr2e-3" \
+    --train_module.compile_model=true \
+    --enable-layer-stats \
+    --layer-stats-interval 1

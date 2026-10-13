@@ -110,6 +110,7 @@ class TransformerBlockType(StrEnum):
     - HC
     - mHC
     - MoDA
+    - Value residual (RWKV-7)
     """
 
     default = "default"
@@ -169,6 +170,11 @@ class TransformerBlockType(StrEnum):
     keel = "keel"
     """
     ➡️ :class:`KeelTransformerBlock`.
+    """
+
+    value_residual = "value_residual"
+    """
+    ➡️ :class:`ValueResidualTransformerBlock` (Pre-LN with the RWKV-7 value residual).
     """
 
     default_depth_scaled = "default_depth_scaled"
@@ -414,6 +420,11 @@ class TransformerBlockConfig(ModuleConfig):
     """Depth-attention configuration for pre- or post-norm MoDA blocks."""
     moda_skip_ffn_kv: bool = False
     """Skip the unused FFN depth K/V projection in the final MoDA block."""
+    value_residual_lora_rank: Optional[int] = None
+    """
+    LoRA rank of the value-residual mixing gate. ``None`` uses the RWKV-7 default
+    ``max(32, round(1.7 * sqrt(d_model) / 32) * 32)``.
+    """
 
     def __post_init__(self, attention: Optional[AttentionConfig] = None):
         # Handle backwards compatibility: old configs used `attention` instead of `sequence_mixer`.
@@ -466,6 +477,7 @@ class TransformerBlockConfig(ModuleConfig):
             PostNormTransformerBlock,
             ReorderedNormTransformerBlock,
             TransformerBlock,
+            ValueResidualTransformerBlock,
         )
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
@@ -485,6 +497,13 @@ class TransformerBlockConfig(ModuleConfig):
         }:
             raise OLMoConfigurationError(
                 "'moda' and 'moda_skip_ffn_kv' are only valid for MoDA block types"
+            )
+        if (
+            "value_residual_lora_rank" in kwargs
+            and self.name != TransformerBlockType.value_residual
+        ):
+            raise OLMoConfigurationError(
+                "'value_residual_lora_rank' is only valid for value-residual blocks"
             )
         kwargs.update(
             d_model=d_model,
@@ -549,6 +568,8 @@ class TransformerBlockConfig(ModuleConfig):
                 return MHCTransformerBlock(hyper_connections=hyper_connections, **kwargs)
             elif self.name == TransformerBlockType.keel:
                 return KeelTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.value_residual:
+                return ValueResidualTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.default_scaled:
                 return LayerNormScaledTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.default_depth_scaled:
@@ -618,6 +639,16 @@ class TransformerBlockConfig(ModuleConfig):
             assert self.layer_norm is not None
             extra_norms = 1 if block_idx == 0 else 2
             block_params += extra_norms * self.layer_norm.num_params(d_model)
+        if self.name == TransformerBlockType.value_residual and block_idx != 0:
+            from ..value_residual import default_value_residual_lora_rank
+
+            assert isinstance(self.sequence_mixer, AttentionConfig)
+            n_heads = self.sequence_mixer.n_heads
+            head_dim = self.sequence_mixer.head_dim or d_model // n_heads
+            v_dim = (self.sequence_mixer.n_kv_heads or n_heads) * head_dim
+            rank = self.value_residual_lora_rank or default_value_residual_lora_rank(d_model)
+            # v0, v1, v2 of the LoRA gate; block 0 only provides v_first.
+            block_params += v_dim + d_model * rank + rank * v_dim
         if (
             self.name in {TransformerBlockType.moda, TransformerBlockType.post_norm_moda}
             and (self.moda or MoDAConfig()).extra_ffn_kv_proj

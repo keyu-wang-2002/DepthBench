@@ -530,7 +530,10 @@ class Attention(SequenceMixer):
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+        v_first: Optional[torch.Tensor] = None,
+        v_first_mix: Optional[torch.Tensor] = None,
+        return_v: bool = False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         Apply attention to the input.
 
@@ -541,8 +544,15 @@ class Attention(SequenceMixer):
             Required together with ``max_doc_len`` when using intra-document masking.
         :param max_doc_len: The maximum document length in the input ``x``.
             Required together with ``cu_doc_lens`` when using intra-document masking.
+        :param v_first: Values of the first layer, shape ``(batch_size, seq_len, n_kv_heads * head_dim)``.
+            When given together with ``v_first_mix``, the values are interpolated towards it,
+            ``v = v + (v_first - v) * v_first_mix`` (RWKV-7 value residual).
+        :param v_first_mix: Interpolation weights in ``[0, 1]`` with the same shape as ``v_first``.
+        :param return_v: Also return the (pre-attention) values with shape
+            ``(batch_size, seq_len, n_kv_heads * head_dim)``.
 
-        :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
+        :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``, and the
+            values if ``return_v`` is set.
         """
         B, T, _ = x.shape
 
@@ -555,6 +565,11 @@ class Attention(SequenceMixer):
             q.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
             k.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
             v.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
+
+        if v_first is not None:
+            assert v_first_mix is not None
+            v = v + (v_first - v) * v_first_mix
+        values = v
 
         if not self.use_head_qk_norm:
             if self.q_norm is not None:
@@ -629,7 +644,10 @@ class Attention(SequenceMixer):
         att = att.view(B, T, -1)
 
         # shape: (batch_size, seq_len, d_model)
-        return self.w_out(att)
+        out = self.w_out(att)
+        if return_v:
+            return out, values
+        return out
 
     def apply_tp(
         self,
