@@ -7,9 +7,10 @@ weights of blocks ``i`` and ``j`` while keeping the architecture fixed). The sup
 architecture families only differ in how these are realised:
 
 residual
-    Pre-LN, Sandwich/Peri-LN, LNS, DeepNorm, KEEL and MoDA. ``z_l`` is the block output
-    and a skipped block is the identity. A skipped MoDA block writes no depth-KV entries,
-    so its slots in the depth cache stay zero.
+    Pre-LN, Sandwich/Peri-LN, LNS, DeepNorm, KEEL, MoDA and Value Residual. ``z_l`` is the
+    block output and a skipped block is the identity. A skipped MoDA block writes no depth-KV
+    entries, so its slots in the depth cache stay zero. If block 0 of a Value Residual model is
+    skipped, the next block provides ``v_first``.
 hyper-connections
     HC and mHC. ``z_l`` concatenates the ``n`` residual streams of the block output into
     one ``n * d`` vector per token. The logit-lens readout collapses the streams with the

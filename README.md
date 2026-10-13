@@ -17,7 +17,7 @@
 <p>
   🧱 DepthBench is a controlled testbed for <b>measuring how residual connections enable more computational depth</b>.
   It trains a broad range of residual-connection and normalization architectures (Pre-LN, Peri-LN, LNS,
-  DeepNorm, KEEL, depth-μP, CompleteP, HC, mHC, MoDA and AttnRes), sweeps aspect ratios (width / depth) under the same data, token budget and fixed parameter count, and ships a set of architecture-aware probes
+  DeepNorm, KEEL, depth-μP, CompleteP, HC, mHC, MoDA, AttnRes and value residual), sweeps aspect ratios (width / depth) under the same data, token budget and fixed parameter count, and ships a set of architecture-aware probes
   (angular distance, causal score, permutation score, logit lens, layer pruning) that run
   directly on native OLMo-core checkpoints.
 </p>
@@ -68,6 +68,7 @@ Block implementations live in [`olmo_core/nn/transformer/block.py`](pretrain/OLM
 | 2025 | Peri-LN (Sandwich-LN) | [Peri-LN: Revisiting Normalization Layer in the Transformer Architecture](https://arxiv.org/abs/2502.02732) | [code](examples/pretrain_periln.py) |
 | 2025 | LNS | [The Curse of Depth in Large Language Models](https://arxiv.org/abs/2502.05795) | [code](examples/pretrain_lns.py) |
 | 2025 | CompleteP | [Don't be lazy: CompleteP enables compute-efficient deep transformers](https://arxiv.org/abs/2505.01618) | [code](examples/pretrain_preln_mup.py) |
+| 2025 | Value Residual (RWKV-7) | [RWKV-7 "Goose" with Expressive Dynamic State Evolution](https://arxiv.org/abs/2503.14456) | [code](examples/pretrain_value_residual.py) |
 | 2025 | mHC | [mHC: Manifold-Constrained Hyper-Connections](https://arxiv.org/abs/2512.24880) | [code](examples/pretrain_mhc.py) · [docs](docs/hyper_connections.md) |
 | 2026 | KEEL | [Post-LayerNorm Is Back: Stable, ExpressivE, and Deep](https://arxiv.org/abs/2601.19895) | [code](examples/pretrain_keel.py) |
 | 2026 | Full / Block AttnRes | [Attention Residuals](https://arxiv.org/abs/2603.15031) | [code](examples/pretrain_attnres.py) |
@@ -224,9 +225,16 @@ To train a different architecture, swap the entrypoint (see [Models](#models)).
 | Full AttnRes | `pretrain_attnres.py` | none (`model.block.attnres_block_size=1` is the default) |
 | Block AttnRes | `pretrain_attnres.py` | `model.block.attnres_block_size=<N>` |
 | MoDA | `pretrain_moda.py` / `pretrain_postnorm_moda.py` | none (needs the MoDA dependency selection) |
+| Value Residual | `pretrain_value_residual.py` | optional `model.block.value_residual_lora_rank=<r>` (default: RWKV-7's `max(32, round(1.7·√d / 32)·32)`) |
 
 Any other field of the OLMo-core experiment config can be overridden with trailing
 `dotted.key=value` arguments, as in the AttnRes rows above.
+
+Value Residual keeps the Pre-LN Llama block and only changes the attention values: block 0 stores
+its values `v_first`, and every later block mixes its own values toward them with a token-dependent
+LoRA gate, `v ← v + (v_first − v) · sigmoid(v0 + (x W1) W2)`, where `x` is the normalized attention input.
+As in RWKV-7, `v0 = 1`, `W1 = 0` and `W2` is orthogonal with gain 0.1, so each block starts with a mixing
+weight of `sigmoid(1) ≈ 0.73`. The gate parameters are excluded from weight decay.
 
 </details>
 
@@ -280,7 +288,7 @@ implements these consistently for all three architecture families:
 
 | Family | Depth state `z_l` | Skipping block `l` | Swapping blocks `i, j` | Logit-lens readout |
 |---|---|---|---|---|
-| Residual (Pre-LN, Peri-LN, LNS, DeepNorm, KEEL, MoDA) | block output | identity (MoDA writes no depth-KV slots) | all learned block weights (LNS `ln_scale` travels with them) | `z_l` |
+| Residual (Pre-LN, Peri-LN, LNS, DeepNorm, KEEL, MoDA, Value Residual) | block output | identity (MoDA writes no depth-KV slots; skipping block 0 of Value Residual makes the next block the `v_first` source) | all learned block weights (LNS `ln_scale` travels with them) | `z_l` |
 | HC / mHC | all residual streams, concatenated | identity on the streams | block weights incl. its hyper-connection parameters | stream sum (= mean after the final RMSNorm) |
 | Full / Block AttnRes | depth mix at AttnRes boundaries, block output inside a block group | no source-bank entry; the next boundary mix becomes the identity on its newest source | core weights + the depth-mixing parameters producing its right boundary | the next consumer's depth mix |
 

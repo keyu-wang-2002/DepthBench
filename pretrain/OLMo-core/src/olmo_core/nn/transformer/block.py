@@ -12,6 +12,7 @@ from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_mo
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.ops import attach_auxiliary_loss
 
 from ..attention.base import SequenceMixerConfig
@@ -966,6 +967,83 @@ class AttnResTransformerBlock(TransformerBlock):
         mlp_out = self.feed_forward(h_normed)
         h = mlp_out if prefix_sum is None else prefix_sum + mlp_out
         return h, attnres_states
+
+
+class ValueResidualTransformerBlock(TransformerBlock):
+    """
+    A Pre-LN block with the `RWKV-7 <https://arxiv.org/abs/2503.14456>`_ value residual.
+
+    The first block stores its attention values ``v_first``. Every later block interpolates its
+    own values towards them with a token-dependent LoRA gate,
+    ``v = v + (v_first - v) * sigmoid(v0 + (x @ v1) @ v2)``, where ``x`` is the normalized
+    attention input. ``v_first`` travels between blocks as ``(x, v_first)``; the last block
+    returns the plain hidden state.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        value_residual_lora_rank: Optional[int] = None,
+        init_device: str = "cpu",
+        **kwargs,
+    ):
+        super().__init__(d_model=d_model, block_idx=block_idx, init_device=init_device, **kwargs)
+        from ..attention import Attention
+        from ..value_residual import ValueResidualMix
+
+        if not isinstance(self.attention, Attention):
+            raise OLMoConfigurationError(
+                "The value residual only supports the default attention implementation"
+            )
+        self.value_residual: Optional[ValueResidualMix] = None
+        if block_idx > 0:
+            self.value_residual = ValueResidualMix(
+                d_model=d_model,
+                v_dim=self.attention.n_kv_heads * self.attention.head_dim,
+                lora_rank=value_residual_lora_rank,
+                dtype=self.attention.w_v.weight.dtype,
+                init_device=init_device,
+            )
+
+    def forward(
+        self,
+        x: torch.Tensor | tuple[torch.Tensor, torch.Tensor],
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        del loss_div_factor
+        x, v_first = x if isinstance(x, tuple) else (x, None)
+        h_normed = self.attention_norm(x)
+        if v_first is None:
+            # No earlier block produced values (block 0, or block 0 was skipped by a probe).
+            attn_out, v_first = self.attention(h_normed, return_v=True, **kwargs)
+        else:
+            assert self.value_residual is not None
+            attn_out = self.attention(
+                h_normed, v_first=v_first, v_first_mix=self.value_residual(h_normed), **kwargs
+            )
+        h = self.attention_residual_stream(x, attn_out)
+        out = self.feed_forward_residual_stream(h, self.feed_forward(self.feed_forward_norm(h)))
+        if self.block_idx == self.n_layers - 1:
+            return out
+        return out, v_first
+
+    def apply_tp(
+        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+    ):
+        del tp_mesh, input_layout, float8_enabled
+        raise NotImplementedError(
+            "Tensor/sequence parallelism is not implemented for value-residual blocks"
+        )
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        flops = super().num_flops_per_token(seq_len)
+        if self.value_residual is not None:
+            flops += 2 * (self.value_residual.v1.numel() + self.value_residual.v2.numel())
+        return flops
 
 
 class ReorderedNormTransformerBlock(TransformerBlock):
