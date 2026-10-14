@@ -8,9 +8,9 @@
 
 [![arXiv](https://img.shields.io/badge/arXiv-2609.32534-b31b1b.svg?style=flat-square)](https://arxiv.org/abs/2609.32534)
 [![hf_model](https://img.shields.io/badge/-Checkpoints-gray.svg?logo=huggingface&style=flat-square)](https://huggingface.co/aspect-ratio-scaling)
-[![Built on OLMo-core](https://img.shields.io/badge/built_on-OLMo--core-f0529c.svg?style=flat-square)](https://github.com/allenai/OLMo-core)
-[![Python 3.10](https://img.shields.io/badge/python-3.10-3776ab.svg?logo=python&logoColor=white&style=flat-square)](environment/README.md)
-[![PyTorch 2.8](https://img.shields.io/badge/PyTorch-2.8_cu128-ee4c2c.svg?logo=pytorch&logoColor=white&style=flat-square)](environment/README.md)
+[![Project](https://img.shields.io/badge/-Project-2ea44f.svg?style=flat-square)](https://keyu-wang-2002.github.io/DepthBench-Website/)
+[![Community](https://img.shields.io/badge/-Community-6f42c1.svg?style=flat-square)](https://keyu-wang-2002.github.io/ScalingDepth/index.html)
+
 
 </div>
 
