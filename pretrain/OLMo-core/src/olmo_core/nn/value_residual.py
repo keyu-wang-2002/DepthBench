@@ -20,8 +20,9 @@ class ValueResidualMix(nn.Module):
     Token-dependent interpolation weights towards the first layer's values,
     ``sigmoid(v0 + (x @ v1) @ v2)``, as in RWKV-7.
 
-    ``v0`` starts at 1, ``v1`` at zero and ``v2`` is orthogonal with gain 0.1, so every
-    layer initially mixes in the first layer's values with weight ``sigmoid(1) ~= 0.73``.
+    ``v0`` starts at 0.73, ``v1`` at zero, and ``v2`` is
+    orthogonally initialized with gain 0.1. The initial mixing
+    weight is ``sigmoid(0.73) ~= 0.675``.
 
     :param d_model: The input (model) dimensionality.
     :param v_dim: The value dimensionality, ``n_kv_heads * head_dim``.
@@ -49,9 +50,9 @@ class ValueResidualMix(nn.Module):
     def reset_parameters(self) -> None:
         if self.v0.is_meta:
             return
-        nn.init.ones_(self.v0)
+        nn.init.constant_(self.v0, 0.73)
         nn.init.zeros_(self.v1)
-        # Orthogonal init needs a float32 QR decomposition.
+
         v2 = torch.empty_like(self.v2, dtype=torch.float32)
         nn.init.orthogonal_(v2, gain=0.1)
         self.v2.copy_(v2)
