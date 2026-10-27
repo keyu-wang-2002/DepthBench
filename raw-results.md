@@ -85,7 +85,7 @@ v) Depth Scaling Ladder
 
 - 1.6B: mHC, <u>block attnres</u>, iHC
 
-- try optimisers: Pion, Shampoo, Moun
+- try optimisers:  Moun, Poin
 
 Stay tuned!
 
