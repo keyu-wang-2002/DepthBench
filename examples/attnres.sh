@@ -1,5 +1,4 @@
 #!/bin/bash
-export WANDB_API_KEY="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"
 
 torchrun --nproc_per_node=4 --master_port=35100 --master_addr=localhost "examples/pretrain_llama_base.py" \
     --run_name=pretrain-llama-350M-lr3e-4 \
